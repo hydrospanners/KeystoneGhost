@@ -1,5 +1,9 @@
 # Keystone Ghost
 
+<p align="center">
+  <img src="logo-icon.png" alt="Keystone Ghost" width="320">
+</p>
+
 Race a ghost of your best Mythic+ runs. One glance answers two questions: **am I within
 time**, and **am I within enemy-forces count** of where I should be right now?
 
