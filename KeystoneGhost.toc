@@ -1,0 +1,41 @@
+## Interface: 120007
+## Title: Keystone Ghost
+## Notes: Race a ghost of your best Mythic+ runs — at-a-glance time and count pace.
+## Author: Hydrospanners
+## Version: 0.3.0
+## Category: Dungeons & Raids
+## IconTexture: Interface\Icons\INV_Misc_PocketWatch_01
+## SavedVariables: KeystoneGhostDB
+## OptionalDeps: EllesmereUI, EllesmereUIMythicTimer, MythicDungeonTools, RaiderIO
+
+# Bundled libs (see each folder's license): LibStub + LibSerialize + LibDeflate power the
+# export/import strings; LibEditMode (namespaced build) powers Edit Mode integration.
+Libs\LibStub\LibStub.lua
+Libs\LibSerialize\LibSerialize.lua
+Libs\LibDeflate\LibDeflate.lua
+Libs\LibEditMode\namespaced.lua
+Libs\LibEditMode\LibEditMode.lua
+Libs\LibEditMode\pools.lua
+Libs\LibEditMode\widgets\button.lua
+Libs\LibEditMode\widgets\checkbox.lua
+Libs\LibEditMode\widgets\dialog.lua
+Libs\LibEditMode\widgets\divider.lua
+Libs\LibEditMode\widgets\dropdown.lua
+Libs\LibEditMode\widgets\expander.lua
+Libs\LibEditMode\widgets\extension.lua
+Libs\LibEditMode\widgets\slider.lua
+Libs\LibEditMode\widgets\colorpicker.lua
+
+Init.lua
+GhostMath.lua
+Codec.lua
+Scenario.lua
+Route.lua
+PullTrack.lua
+Style.lua
+Ghosts.lua
+Recorder.lua
+Bar.lua
+Splits.lua
+EditMode.lua
+Core.lua
