@@ -1,26 +1,7 @@
 # Keystone Ghost
 
-<p align="center">
-  <img src="logo-icon.png" alt="Keystone Ghost" width="320">
-</p>
-
 Race a ghost of your best Mythic+ runs. One glance answers two questions: **am I within
 time**, and **am I within enemy-forces count** of where I should be right now?
-
-## Installation
-
-1. Go to the [Releases](../../releases/latest) page and download the latest `.zip`
-2. Extract the **KeystoneGhost** folder into your addons directory:
-   ```
-   World of Warcraft\_retail_\Interface\AddOns\
-   ```
-3. Log in to WoW or type `/reload` in-game
-
-## Requirements
-
-- World of Warcraft Retail (Midnight / 12.x+)
-- No required dependencies. Optional, detected at runtime: EllesmereUI (styling +
-  docking), RaiderIO (replay ghosts), MythicDungeonTools (route + pull indicator)
 
 ## What you see
 
