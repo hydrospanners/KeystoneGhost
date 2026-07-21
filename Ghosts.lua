@@ -425,36 +425,14 @@ function G:MyPicks(create)
     return picks[me]
 end
 
---- The effective pick for a dungeon on the CURRENT character: their own pick,
---- else the account-wide import auto-pick (Fredrik 2026-07-21 round 3:
---- "imports need to be visible for all characters" — an imported ghost races
---- WHOEVER you play, until that character's own deliberate pin shadows it).
-function G:EffectivePick(mapID)
-    local mine = G:MyPicks()
-    return (mine and mine[mapID]) or KG.db.importPick[mapID]
-end
-
---- The whole effective table for the Library model, [mapID] = pick: the
---- account-wide import auto-picks with the character's own picks laid over
---- them. A fresh merged table each call — display-sized, built per Refresh.
-function G:EffectivePicks()
-    local merged = {}
-    for mapID, e in pairs(KG.db.importPick) do merged[mapID] = e end
-    local mine = G:MyPicks()
-    if mine then
-        for mapID, e in pairs(mine) do merged[mapID] = e end
-    end
-    return merged
-end
-
 --- Store an imported run under its exporter's character key and auto-pick it
 --- for racing in that dungeon — importing exists to compete against the sender.
---- The auto-pick is ACCOUNT-WIDE (db.importPick, one per dungeon): the import
---- races EVERY character (Fredrik 2026-07-21 round 3), sitting under the
---- per-character picks — any character's own deliberate pin shadows it for
---- them alone. The importing character's own pin clears so the import races
---- them immediately; their Raider.IO pin is the one pin an import won't
---- unseat (re-pin the import by hand to override). `route` (optional,
+--- Import DATA is global, the import PIN is local (Fredrik 2026-07-21 round 4):
+--- the ghost lands in db.runs, so every character's Library lists it, but only
+--- the IMPORTING character's dungeon slot is claimed — and claimed
+--- UNCONDITIONALLY, over any pin including the Raider.IO ghost ("import
+--- overrides pinning even if it is a RaiderIO Ghost"). Other characters pin
+--- the row themselves if they want to race it. `route` (optional,
 --- already sanitized) lands in the Route Store; the run's routeHash is
 --- forced to OUR recomputed hash, never the sender's claim. `shareTag` (already
 --- sanitized by the codec) is stamped for the future Data-view's alt grouping.
@@ -472,12 +450,8 @@ function G:StoreImport(run, exporter, route, shareTag)
     db.runs[exporter][run.mapID] = db.runs[exporter][run.mapID] or {}
     db.runs[exporter][run.mapID][run.level] = db.runs[exporter][run.mapID][run.level] or {}
     M.InsertRun(db.runs[exporter][run.mapID][run.level], run)
-    db.importPick[run.mapID] = { char = exporter, level = run.level, tier = run.chests }
-    local mine = G:MyPicks()
-    local cur = mine and mine[run.mapID]
-    if type(cur) == "table" and cur.char ~= KG.RIO_CHAR then
-        mine[run.mapID] = nil -- the import competes NOW for the importer; rio alone stays
-    end
+    local mine = G:MyPicks(true)
+    mine[run.mapID] = { char = exporter, level = run.level, tier = run.chests }
     db.lastImported = { char = exporter, mapID = run.mapID, level = run.level }
     G:SweepRoutes() -- InsertRun may have rejected the run: don't keep an orphan route
     return run
@@ -508,10 +482,6 @@ function G:DeleteRun(charKey, mapID, level, tier)
             mine[mapID] = nil
         end
     end
-    local ip = db.importPick[mapID]
-    if type(ip) == "table" and ip.char == charKey and ip.level == level and ip.tier == tier then
-        db.importPick[mapID] = nil -- the shared import auto-pick dies with its run
-    end
     G:InvalidateRoster()
     G:SweepRoutes()
     return true
@@ -528,36 +498,22 @@ end
 --- still never picks one, but an explicit pin is the player's deliberate
 --- override — "beat my depleted attempt properly" is a real race. Returns the
 --- new pinned state. Pinning any row replaces the dungeon's previous pin, rio
---- or normal, either direction (the newer deliberate act wins).
---- The row may be lit by the ACCOUNT-WIDE import auto-pick instead of an own
---- pin (round 3): unpinning that row dismisses the shared default everywhere
---- (the ghost stays stored; any character can re-pin it as their own) — a
---- per-character "off" would need a third pick state for a default nobody
---- chose deliberately. Unpinning an own pin also drops an identical shared
---- auto-pick, so one click never leaves the row still lit.
+--- or normal, either direction (the newer deliberate act wins) — and so does
+--- an import on THIS character (StoreImport claims the slot unconditionally).
 function G:TogglePin(charKey, mapID, level, tier)
     local mine = G:MyPicks(true)
-    local own = mine[mapID]
-    local eff = own or KG.db.importPick[mapID]
+    local p = mine[mapID]
     if charKey == KG.RIO_CHAR then
-        if type(eff) == "table" and eff.char == KG.RIO_CHAR then
-            mine[mapID] = nil -- rio only ever lights via an own pin (imports are never rio)
+        if type(p) == "table" and p.char == KG.RIO_CHAR then
+            mine[mapID] = nil
             return false
         end
         mine[mapID] = { char = charKey }
         return true
     end
     if not tier then return false end
-    if type(eff) == "table" and eff.char == charKey and eff.level == level and eff.tier == tier then
-        if own then
-            mine[mapID] = nil
-            local ip = KG.db.importPick[mapID]
-            if type(ip) == "table" and ip.char == charKey and ip.level == level and ip.tier == tier then
-                KG.db.importPick[mapID] = nil -- identical shared default would keep the row lit
-            end
-        else
-            KG.db.importPick[mapID] = nil -- dismissing the shared import auto-pick
-        end
+    if type(p) == "table" and p.char == charKey and p.level == level and p.tier == tier then
+        mine[mapID] = nil
         return false
     end
     mine[mapID] = { char = charKey, level = level, tier = tier }
@@ -652,10 +608,9 @@ function G:ExportString(mapID, level, charKey, tier)
         G:GetOrMintShareTag()))
 end
 
---- Build the ghost reference for a live run: the effective pinned ghost — the
---- character's own pin, else the account-wide import auto-pick (one per
---- dungeon, races ANY key level; Fredrik 2026-07-21: "you might want to race
---- against your +12 in a +20", "imports need to be visible for all characters")
+--- Build the ghost reference for a live run: this character's pinned ghost
+--- (Library pin / import auto-pick — one per dungeon, races ANY key level;
+--- Fredrik 2026-07-21: "you might want to race against your +12 in a +20")
 --- → own recorded run (exact level → highest below → lowest above) →
 --- Raider.IO ghost (fresh convert → stored cache → live mirror) → season best
 --- (linear) → par (linear). Every reference carries `snapshots` so the bar and
@@ -666,7 +621,8 @@ end
 --- <dungeon>" contract. A dangling pin (run deleted, replay unreadable) falls
 --- through to the automatic chain silently.
 function G:BuildReference(mapID, level)
-    local pick = level and G:EffectivePick(mapID) -- no pins in the level-less demo paths
+    local mine = level and G:MyPicks() -- no pins in the level-less demo paths
+    local pick = mine and mine[mapID]
 
     if type(pick) == "table" and pick.char then -- pinned ghost (a tier-0 PIN is legal:
         -- the Library's deliberate-override loosening, 2026-07-21 — only the

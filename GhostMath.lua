@@ -649,11 +649,11 @@ end
 --- file); groups sort by resolved name, "map N" fallback. Within a group:
 --- raceable rows first (level desc, tier desc, faster first), Depleted (tier 0)
 --- sink to the bottom — the top of every group stays scannable for ghosts that
---- can actually race. `pick` = the VIEWING character's EFFECTIVE dungeon-keyed
---- pick table (Ghosts:EffectivePicks — own picks over the account-wide import
---- auto-picks): the one row matching pick[mapID] — char + level + tier;
---- Raider.IO rows match on char alone — is flagged `pinned`. One selected row
---- per dungeon, per character (Fredrik 2026-07-21).
+--- can actually race. `pick` = the VIEWING character's dungeon-keyed pick
+--- table (db.picks[me] via Ghosts:MyPicks, may be nil): the one row matching
+--- pick[mapID] — char + level + tier; Raider.IO rows match on char alone —
+--- is flagged `pinned`. One selected row per dungeon, per character
+--- (Fredrik 2026-07-21).
 function M.LibraryModel(runs, pick, nameFor)
     local groups, byMap = {}, {}
     for charKey, maps in pairs(runs or {}) do

@@ -38,10 +38,9 @@ function KG.InitDB()
                               -- character's ONE pick per dungeon (Library pin; races any
                               -- key level — per-character and dungeon-wide since
                               -- 2026-07-21, Fredrik's Library reports)
-    db.importPick = db.importPick or {} -- [mapID] = { char, level, tier } — the ACCOUNT-WIDE
-                              -- import auto-pick layer under the per-character picks
-                              -- ("imports need to be visible for all characters"): races
-                              -- every character until their own pin shadows it
+    db.importPick = nil -- retired the same day it appeared (2026-07-21): the import PIN
+                              -- is local to the importing character (round 4) — the
+                              -- import DATA was always global via db.runs
     db.pick = nil -- retired 2026-07-21: the account-global [map..":"..level] store —
                   -- per-level keys don't map onto the per-character dungeon-wide
                   -- model, so old pins reset once (re-pin from the Library)
