@@ -34,8 +34,17 @@ function KG.InitDB()
     if db.bgAlpha == nil then db.bgAlpha = 1 end -- chrome opacity (backdrop/border/accent), Edit Mode slider
     if db.bounce == nil then db.bounce = true end -- walk-cycle hop on your icon
     db.runs = db.runs or {}   -- [charKey][mapID][level] = { [tier] = run } (one slot per chest tier)
-    db.pick = db.pick or {}   -- [mapID..":"..level] = { char, tier } auto-pick from imports
-                              -- (manual tier override dropped 2026-07-19; pick UI is a later stage)
+    db.picks = db.picks or {} -- [pinnerCharKey][mapID] = { char, level, tier } — each
+                              -- character's ONE pick per dungeon (Library pin; races any
+                              -- key level — per-character and dungeon-wide since
+                              -- 2026-07-21, Fredrik's Library reports)
+    db.importPick = db.importPick or {} -- [mapID] = { char, level, tier } — the ACCOUNT-WIDE
+                              -- import auto-pick layer under the per-character picks
+                              -- ("imports need to be visible for all characters"): races
+                              -- every character until their own pin shadows it
+    db.pick = nil -- retired 2026-07-21: the account-global [map..":"..level] store —
+                  -- per-level keys don't map onto the per-character dungeon-wide
+                  -- model, so old pins reset once (re-pin from the Library)
     db.routes = db.routes or {} -- Route Store: [contentHash] = captured route (dossier §7);
                                 -- runs reference via run.routeHash; GC'd by Ghosts:SweepRoutes
     for _, rd in pairs(db.routes) do -- one-time field renames (2026-07-20)

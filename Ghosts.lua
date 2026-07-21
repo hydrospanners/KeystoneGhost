@@ -411,9 +411,51 @@ function G:GetOrMintShareTag()
     return db.shareTag
 end
 
---- Store an imported run under its exporter's character key and auto-pick it for racing
---- at that (dungeon, level) — importing exists to compete against the sender. `route`
---- (optional, already sanitized) lands in the Route Store; the run's routeHash is
+--- The current character's pick table, [mapID] = { char, level, tier } (the
+--- Raider.IO pin is { char = KG.RIO_CHAR } alone). Picks are PER CHARACTER
+--- (Fredrik 2026-07-21: Boonpala pinning a Boonkerz run must not plant that
+--- pin on Boonkerz too) and ONE PER DUNGEON by construction — a single table
+--- slot per mapID is the whole exclusivity mechanism, no sweeping needed.
+--- `create` builds the character's table on first pin; without it the return
+--- may be nil (a fresh character — every consumer handles that).
+function G:MyPicks(create)
+    local picks = KG.db.picks
+    local me = KG.CharacterKey()
+    if create and not picks[me] then picks[me] = {} end
+    return picks[me]
+end
+
+--- The effective pick for a dungeon on the CURRENT character: their own pick,
+--- else the account-wide import auto-pick (Fredrik 2026-07-21 round 3:
+--- "imports need to be visible for all characters" — an imported ghost races
+--- WHOEVER you play, until that character's own deliberate pin shadows it).
+function G:EffectivePick(mapID)
+    local mine = G:MyPicks()
+    return (mine and mine[mapID]) or KG.db.importPick[mapID]
+end
+
+--- The whole effective table for the Library model, [mapID] = pick: the
+--- account-wide import auto-picks with the character's own picks laid over
+--- them. A fresh merged table each call — display-sized, built per Refresh.
+function G:EffectivePicks()
+    local merged = {}
+    for mapID, e in pairs(KG.db.importPick) do merged[mapID] = e end
+    local mine = G:MyPicks()
+    if mine then
+        for mapID, e in pairs(mine) do merged[mapID] = e end
+    end
+    return merged
+end
+
+--- Store an imported run under its exporter's character key and auto-pick it
+--- for racing in that dungeon — importing exists to compete against the sender.
+--- The auto-pick is ACCOUNT-WIDE (db.importPick, one per dungeon): the import
+--- races EVERY character (Fredrik 2026-07-21 round 3), sitting under the
+--- per-character picks — any character's own deliberate pin shadows it for
+--- them alone. The importing character's own pin clears so the import races
+--- them immediately; their Raider.IO pin is the one pin an import won't
+--- unseat (re-pin the import by hand to override). `route` (optional,
+--- already sanitized) lands in the Route Store; the run's routeHash is
 --- forced to OUR recomputed hash, never the sender's claim. `shareTag` (already
 --- sanitized by the codec) is stamped for the future Data-view's alt grouping.
 function G:StoreImport(run, exporter, route, shareTag)
@@ -430,7 +472,12 @@ function G:StoreImport(run, exporter, route, shareTag)
     db.runs[exporter][run.mapID] = db.runs[exporter][run.mapID] or {}
     db.runs[exporter][run.mapID][run.level] = db.runs[exporter][run.mapID][run.level] or {}
     M.InsertRun(db.runs[exporter][run.mapID][run.level], run)
-    db.pick[run.mapID .. ":" .. run.level] = { char = exporter, tier = run.chests }
+    db.importPick[run.mapID] = { char = exporter, level = run.level, tier = run.chests }
+    local mine = G:MyPicks()
+    local cur = mine and mine[run.mapID]
+    if type(cur) == "table" and cur.char ~= KG.RIO_CHAR then
+        mine[run.mapID] = nil -- the import competes NOW for the importer; rio alone stays
+    end
     db.lastImported = { char = exporter, mapID = run.mapID, level = run.level }
     G:SweepRoutes() -- InsertRun may have rejected the run: don't keep an orphan route
     return run
@@ -449,52 +496,71 @@ function G:DeleteRun(charKey, mapID, level, tier)
     if not next(tiers) then byLevel[level] = nil end
     if byLevel and not next(byLevel) then byMap[mapID] = nil end
     if byMap and not next(byMap) then db.runs[charKey] = nil end
-    local pk = mapID .. ":" .. level
-    local p = db.pick[pk]
-    if type(p) == "table" and p.char == charKey and (p.tier == nil or p.tier == tier) then
-        db.pick[pk] = nil
+    -- Clear EVERY character's pick pointing at exactly this run — any alt may
+    -- have pinned it, and a deleted ghost must not leave dangling selections.
+    -- Deleting the Raider.IO row is cache eviction (it resurrects on next
+    -- sight — honest cache semantics); its pins go too, so the returning row
+    -- comes back unpinned instead of silently racing again.
+    for _, mine in pairs(db.picks) do
+        local p = mine[mapID]
+        if type(p) == "table" and p.char == charKey
+            and (charKey == KG.RIO_CHAR or (p.level == level and p.tier == tier)) then
+            mine[mapID] = nil
+        end
     end
-    if charKey == KG.RIO_CHAR then
-        -- Deleting the Raider.IO row is cache eviction (it resurrects on next
-        -- sight — honest cache semantics); its dungeon-wide pin must not dangle
-        -- and silently resurrect a race with it.
-        db.pick[mapID .. ":rio"] = nil
+    local ip = db.importPick[mapID]
+    if type(ip) == "table" and ip.char == charKey and ip.level == level and ip.tier == tier then
+        db.importPick[mapID] = nil -- the shared import auto-pick dies with its run
     end
     G:InvalidateRoster()
     G:SweepRoutes()
     return true
 end
 
---- Toggle the Library pin for a run: pin = that exact run races when a matching
---- (dungeon, level) key starts (one pin per map:level — pinning elsewhere moves
---- it); unpin = back to the automatic chain. Depleted runs CAN pin (Fredrik
---- 2026-07-21, loosening the 2026-07-19 rule): the automatic chain still never
---- picks one, but an explicit pin is the player's deliberate override — "beat
---- my depleted attempt properly" is a real race. Returns the new pinned state.
---- The Raider.IO row pins DUNGEON-WIDE (Fredrik 2026-07-21: "unless I pin it"):
---- one level-independent key, `mapID .. ":rio"` — the ghost races ANY key level
---- of that dungeon, even over own/imported ghosts. A later deliberate normal pin
---- clears it (the newer deliberate act wins); import auto-picks do NOT.
+--- Toggle the Library pin for a run: pin = that run races when a key starts in
+--- its dungeon at ANY level (Fredrik 2026-07-21: "you might want to race
+--- against your +12 in a +20" — every row now pins dungeon-wide, the way the
+--- Raider.IO row always did); unpin = back to the automatic chain. One pin per
+--- dungeon per character (his same-day bug report: a second pin left both rows
+--- lit; and an alt's pin must not follow the ghost's owner home) — the single
+--- picks slot per mapID enforces both by construction. Depleted runs CAN pin
+--- (Fredrik 2026-07-21, loosening the 2026-07-19 rule): the automatic chain
+--- still never picks one, but an explicit pin is the player's deliberate
+--- override — "beat my depleted attempt properly" is a real race. Returns the
+--- new pinned state. Pinning any row replaces the dungeon's previous pin, rio
+--- or normal, either direction (the newer deliberate act wins).
+--- The row may be lit by the ACCOUNT-WIDE import auto-pick instead of an own
+--- pin (round 3): unpinning that row dismisses the shared default everywhere
+--- (the ghost stays stored; any character can re-pin it as their own) — a
+--- per-character "off" would need a third pick state for a default nobody
+--- chose deliberately. Unpinning an own pin also drops an identical shared
+--- auto-pick, so one click never leaves the row still lit.
 function G:TogglePin(charKey, mapID, level, tier)
-    local db = KG.db
+    local mine = G:MyPicks(true)
+    local own = mine[mapID]
+    local eff = own or KG.db.importPick[mapID]
     if charKey == KG.RIO_CHAR then
-        local rk = mapID .. ":rio"
-        if db.pick[rk] then
-            db.pick[rk] = nil
+        if type(eff) == "table" and eff.char == KG.RIO_CHAR then
+            mine[mapID] = nil -- rio only ever lights via an own pin (imports are never rio)
             return false
         end
-        db.pick[rk] = { char = charKey }
+        mine[mapID] = { char = charKey }
         return true
     end
     if not tier then return false end
-    local pk = mapID .. ":" .. level
-    local p = db.pick[pk]
-    if type(p) == "table" and p.char == charKey and p.tier == tier then
-        db.pick[pk] = nil
+    if type(eff) == "table" and eff.char == charKey and eff.level == level and eff.tier == tier then
+        if own then
+            mine[mapID] = nil
+            local ip = KG.db.importPick[mapID]
+            if type(ip) == "table" and ip.char == charKey and ip.level == level and ip.tier == tier then
+                KG.db.importPick[mapID] = nil -- identical shared default would keep the row lit
+            end
+        else
+            KG.db.importPick[mapID] = nil -- dismissing the shared import auto-pick
+        end
         return false
     end
-    db.pick[pk] = { char = charKey, tier = tier }
-    db.pick[mapID .. ":rio"] = nil -- a deliberate normal pin outranks the rio pin
+    mine[mapID] = { char = charKey, level = level, tier = tier }
     return true
 end
 
@@ -586,58 +652,51 @@ function G:ExportString(mapID, level, charKey, tier)
         G:GetOrMintShareTag()))
 end
 
---- Build the ghost reference for a live run: pinned ghost (Library pin / import
---- auto-pick) → dungeon-wide Raider.IO pin → own recorded run (exact level →
---- highest below → lowest above) → Raider.IO ghost (fresh convert → stored cache
---- → live mirror) → season best (linear) → par (linear). Every reference carries
---- `snapshots` so the bar and delta math treat all kinds uniformly. Depleted
---- (tier 0) runs are recorded but NEVER raced (Fredrik 2026-07-19) — the +1
---- sweeper is the deplete pressure. A pinned reference races PINNED
---- (`startPinned` — auto-Overtakes blocked until unpinned in-race), the Ghost
---- Library's "races when you run <dungeon> +<level>" contract. Precedence when
---- pins coexist: the map:level pick wins at its level (specific beats general),
---- the rio pin everywhere else.
+--- Build the ghost reference for a live run: the effective pinned ghost — the
+--- character's own pin, else the account-wide import auto-pick (one per
+--- dungeon, races ANY key level; Fredrik 2026-07-21: "you might want to race
+--- against your +12 in a +20", "imports need to be visible for all characters")
+--- → own recorded run (exact level → highest below → lowest above) →
+--- Raider.IO ghost (fresh convert → stored cache → live mirror) → season best
+--- (linear) → par (linear). Every reference carries `snapshots` so the bar and
+--- delta math treat all kinds uniformly. Depleted (tier 0) runs are recorded
+--- but NEVER raced (Fredrik 2026-07-19) — the +1 sweeper is the deplete
+--- pressure. A pinned reference races PINNED (`startPinned` — auto-Overtakes
+--- blocked until unpinned in-race), the Ghost Library's "races when you run
+--- <dungeon>" contract. A dangling pin (run deleted, replay unreadable) falls
+--- through to the automatic chain silently.
 function G:BuildReference(mapID, level)
-    local pick = level and KG.db.pick[mapID .. ":" .. level]
+    local pick = level and G:EffectivePick(mapID) -- no pins in the level-less demo paths
 
     if type(pick) == "table" and pick.char then -- pinned ghost (a tier-0 PIN is legal:
         -- the Library's deliberate-override loosening, 2026-07-21 — only the
         -- automatic fallbacks below stay timed-only)
-        if pick.char == KG.RIO_CHAR then -- unreachable by construction (rio pins
-            -- live on the :rio key), but a hand-edited SavedVariables must not
-            -- dress the Raider.IO ghost as an import
+        if pick.char == KG.RIO_CHAR then
             local rioRef = G:BuildRioRef(mapID, true)
             if rioRef then return rioRef end
-        end
-        local byMap = KG.db.runs[pick.char]
-        local tiers = byMap and byMap[mapID] and byMap[mapID][level]
-        local run = tiers and ((pick.tier and tiers[pick.tier]) or M.BestRun(tiers, 1))
-        if run and run.snapshots then
-            if pick.char == KG.CharacterKey() and not run.importedFrom then
-                return { -- a Library-pinned own run reads as yours, not as an import
-                    kind = "personal", startPinned = true,
-                    label = string.format("Your %s +%d (%s)", M.TierLabel(run.chests),
-                        level, M.FormatClock(run.durationSec)),
-                    run = run, durationSec = run.durationSec,
-                    tier = run.chests, levelUsed = level,
+        else
+            local byMap = KG.db.runs[pick.char]
+            local tiers = byMap and byMap[mapID] and byMap[mapID][pick.level]
+            local run = tiers and ((pick.tier and tiers[pick.tier]) or M.BestRun(tiers, 1))
+            if run and run.snapshots then
+                if pick.char == KG.CharacterKey() and not run.importedFrom then
+                    return { -- a Library-pinned own run reads as yours, not as an import
+                        kind = "personal", startPinned = true,
+                        label = string.format("Your %s +%d (%s)", M.TierLabel(run.chests),
+                            pick.level, M.FormatClock(run.durationSec)),
+                        run = run, durationSec = run.durationSec,
+                        tier = run.chests, levelUsed = pick.level,
+                    }
+                end
+                return { -- an import, or a pinned alt run (possessive label either way)
+                    kind = "import", startPinned = true,
+                    label = string.format("%s's %s +%d (%s)", ShortName(pick.char),
+                        M.TierLabel(run.chests), pick.level, M.FormatClock(run.durationSec)),
+                    run = run,
+                    durationSec = run.durationSec,
                 }
             end
-            return { -- an import, or a pinned alt run (possessive label either way)
-                kind = "import", startPinned = true,
-                label = string.format("%s's %s +%d (%s)", ShortName(pick.char),
-                    M.TierLabel(run.chests), level, M.FormatClock(run.durationSec)),
-                run = run,
-                durationSec = run.durationSec,
-            }
         end
-    end
-
-    -- The dungeon-wide Raider.IO pin (Fredrik 2026-07-21): races ANY level of this
-    -- dungeon, even over own ghosts — that is what pinning it MEANS. Falls through
-    -- silently on total failure, same as a missing pinned run above.
-    if KG.db.pick[mapID .. ":rio"] then
-        local rioRef = G:BuildRioRef(mapID, true)
-        if rioRef then return rioRef end
     end
 
     local _, byLevel = RunsFor(KG.CharacterKey(), mapID, level or -1, false)
