@@ -311,6 +311,12 @@ function Codec.ValidatePayload(payload)
             tostring(payload.v))
     end
     local exporter = type(payload.exporter) == "string" and payload.exporter:sub(1, 60) or "Unknown"
+    if exporter == KG.RIO_CHAR then
+        -- Impersonation gate: StoreImport files runs under the exporter key, and
+        -- the Raider.IO bucket is OURS (cache-on-sight replaces it wholesale) — a
+        -- crafted string must not write into it or wear its roster identity.
+        exporter = "Unknown"
+    end
     local kgv = type(payload.kgv) == "string" and payload.kgv:sub(1, 20) or nil
     local run = M.CleanRun(UnpackRun(payload.run))
     if not run then return nil, nil, "invalid run data" end
