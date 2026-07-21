@@ -75,6 +75,12 @@ function KG.Start()
                 -- Logged/reloaded into a running key: rebuild the clock and keep racing.
                 KG.Recorder:Resume()
             end
+            -- Cache-on-sight (first-class replay, 2026-07-21): RaiderIO's provider
+            -- fills during STAGING — just walking into the dungeon banks the
+            -- converted ghost for the Library. Their PEW-adjacent handler may run
+            -- after ours, hence the one delayed retry. Self-gating outside keys.
+            KG.Ghosts:CacheRioOnSight()
+            C_Timer.After(5, function() KG.Ghosts:CacheRioOnSight() end)
         end
         KG.Bar:Refresh()
         KG.Splits:Refresh()
@@ -211,7 +217,7 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         KG.testMode = not KG.testMode
         if KG.testMode then KG.Bar.ResetTestLoop() end -- loop 1, fresh DB scan
         Print("test mode " .. (KG.testMode
-            and "ON — demo race at 10x speed, alternating loops: full roster (your real ghosts when stored) ↔ RaiderIO replay only (the first-run look)."
+            and "ON — demo race at 10x speed, alternating loops: full roster (your real ghosts when stored) ↔ Raider.IO ghost only (a converted replay races you — the first-run look)."
             or "off."))
         KG.Bar:Refresh()
     elseif cmd == "list" then
