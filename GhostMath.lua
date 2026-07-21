@@ -10,6 +10,13 @@
 -- own units. Cross-total comparisons happen in fraction space; same-total
 -- comparisons stay exact integers. `bossKills` is exact kill timestamps when known.
 --
+-- Timelines are STEP-SHAPED where the producer is change-driven (the recorder since
+-- the 2026-07-21 event-log cutover, the RaiderIO paths): nodes only where the count
+-- moved, flat spans re-pinned by doubled base nodes (AppendStepNode /
+-- ConvertRioReplay — one encoding, every producer). Interpolation stays LINEAR
+-- everywhere below, so the same math renders truth for step-shaped, legacy-cadence,
+-- and linear-pace timelines alike — the step lives in the data, not in a mode flag.
+--
 -- The core racing primitive is GhostTimeFor: invert the ghost's timeline to find the
 -- earliest time the ghost had reached the live player's current state (forces count
 -- AND boss count). delta = GhostTimeFor(state) - elapsed. Positive = the ghost needed
@@ -45,6 +52,27 @@ function M.SampleAt(snapshots, elapsed)
         end
     end
     return snapshots[n][2], snapshots[n][3] or 0
+end
+
+--- Append a live change-point to a step-shaped timeline (change-driven capture:
+--- the recorder and the RaiderIO mirrors). Between changes the true count curve
+--- is FLAT, so a count move across a gap > 1 s first re-pins the flat span with a
+--- base node at the OLD count — the doubled step nodes ConvertRioReplay already
+--- writes — and the inversion then answers the change's exact time instead of
+--- interpolating a slope that was never played. Gaps ≤ 1 s skip the base: whole-
+--- second storage can't render a sharper step anyway. No-op when nothing moved
+--- (callers fire on every event burst and reconcile tick). The boss column needs
+--- no doubling — SampleAt holds a[3] across each bracket, so a kill-only node
+--- steps exactly at its own t.
+function M.AppendStepNode(snaps, t, count, bosses)
+    bosses = bosses or 0
+    local last = snaps[#snaps]
+    if last and last[2] == count and (last[3] or 0) == bosses then return false end
+    if last and last[2] ~= count and t - last[1] > 1 then
+        snaps[#snaps + 1] = { t, last[2], bosses }
+    end
+    snaps[#snaps + 1] = { t, count, bosses }
+    return true
 end
 
 --- Earliest time the ghost reached `count` forces (linear interpolation between

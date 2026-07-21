@@ -1,11 +1,26 @@
--- Live-run recorder: samples { t, count, bosses } every SNAPSHOT_INTERVAL during an
--- active key — the raw integer enemy-forces COUNT, count-space storage (DESIGN
--- "Count-space storage"): the count is the scenario's source value, percent is
--- derived at render time. Timestamps boss kills the moment the boss criterion flips,
--- records the death timeline, and saves the run into the tier-slot DB on completion
+-- Live-run recorder: CHANGE-DRIVEN capture (the RaiderIO event-log lesson,
+-- 2026-07-21 — their replay's ms-granular change log beat our old 2 s cadence, and
+-- the game TELLS you when the count moves). A { t, count, bosses } node lands the
+-- moment the raw integer enemy-forces COUNT moves or a boss criterion flips —
+-- captured from SCENARIO_CRITERIA_UPDATE / SCENARIO_POI_UPDATE (5.0.4+, wiki-
+-- verified 2026-07-21; args ignored — they can be secrets, the capture does guarded
+-- ABSOLUTE reads instead, which also makes a missed event self-heal on the next
+-- one). Deaths and boss engages were already event-driven
+-- (CHALLENGE_MODE_DEATH_COUNT_UPDATED, ENCOUNTER_START/END). Between changes the
+-- true curve is FLAT, so a count move lands as doubled step nodes
+-- (GhostMath.AppendStepNode — ConvertRioReplay's encoding) and the inversion never
+-- interpolates a slope that was never played. Count-space storage (DESIGN
+-- "Count-space storage") is unchanged: the count is the scenario's source value,
+-- percent derived at render time. Saves into the tier-slot DB on completion
 -- (whole-second quantization happens ONCE, at save — live RAM keeps full-precision
 -- GetTime floats so the smooth-Mario clock is untouched; integers for facts, floats
 -- for rendering). Also owns the live state the bar reads.
+--
+-- The 0.5 s ticker still exists but records nothing on its own: it anchors the
+-- clock, drives the racing side (RaiderIO mirror, Overtake evaluation), and fires a
+-- RECONCILE_INTERVAL failsafe capture — change-guarded, so it appends nodes only
+-- when an event went missing (a future patch dropping the event degrades recording
+-- to 5 s cadence instead of killing it).
 --
 -- Clock: elapsed = GetTime() - startTime, with startTime continuously re-anchored to the
 -- OFFICIAL keystone timer (GetWorldElapsedTime): it starts after the countdown and jumps
@@ -29,7 +44,7 @@ local S = KG.Scenario
 local R = {}
 KG.Recorder = R
 
-local SNAPSHOT_INTERVAL = 2
+local RECONCILE_INTERVAL = 5 -- failsafe capture cadence; the events do the real work
 local MIN_SNAPSHOTS = 3
 
 local rec = { active = false }
@@ -101,7 +116,8 @@ function R:OnKeyStart()
     rec.active = true
     rec.startTime = GetTime()
     -- CHALLENGE_MODE_START fires when the COUNTDOWN begins; the race must not until
-    -- the official keystone timer starts ticking (OnTick anchors and clears this).
+    -- the official keystone timer starts ticking (AnchorClock clears this, from
+    -- whichever capture or tick sees the timer first).
     rec.awaitingTimer = true
     rec.mapID = S:GetChallengeMapID()
     rec.level = S:GetActiveKeyLevel()
@@ -112,12 +128,12 @@ function R:OnKeyStart()
     rec.bossCounts = {}
     rec.bossDone = {}
     rec.deaths = {}
-    rec.lastSnap = rec.startTime
     rec.lastPct = 0
     rec.lastRaw, rec.lastTotal = 0, 0
     rec.deathCount = 0
     rec.partial = nil
     rec.seededKills = 0
+    rec.lastCaptureGT, rec.lastReconcile = nil, nil -- capture coalescing / heartbeat state
 
     -- Payload-expansion context (DESIGN "Payload expansion"): captured AT RUN TIME —
     -- spec/guild/level change later; history must not rewrite. Party ratings are
@@ -209,8 +225,9 @@ end
 --- persisting — and only the session-local machinery (clock anchor, reference,
 --- Overtake, PullTrack) is rebuilt around them. Whatever happened during the gap is
 --- folded in at the resume moment (the moment we LEARNED of it, not the moment it
---- happened): gap boss kills timestamp on the first tick's criteria diff, gap deaths
---- here, gap forces on the next snapshot — the curve interpolates across the hole.
+--- happened): gap boss kills and gap forces on the first capture — the reconcile
+--- fires on the very next tick — landing as a step at the resume moment; gap deaths
+--- here. The flat span across the hole is the honest shape: nothing was WATCHED.
 function R:AdoptLiveRun(lr, elapsed)
     R:AbandonPartySpecSweep()
     R.summary = nil
@@ -220,7 +237,10 @@ function R:AdoptLiveRun(lr, elapsed)
     rec.startTime = now - elapsed
     rec.awaitingTimer = nil
     rec.startEpoch = S:ServerNow() - elapsed -- re-stamp: exact again after the gap
-    rec.lastSnap = now
+    -- Fresh capture state: lastReconcile nil makes the next tick capture at once
+    -- (the gap fold); lastCaptureGT could collide after a client restart reset
+    -- GetTime, so it never survives adoption.
+    rec.lastCaptureGT, rec.lastReconcile = nil, nil
     rec.pendingEngage = nil -- a mid-fight reload: that engage may have resolved unseen
 
     -- Deaths during the gap arrive count-only; fold them into one timeline entry.
@@ -309,42 +329,18 @@ function R:IsPinned()
     return overtake ~= nil and overtake.pinned or false
 end
 
---- ENCOUNTER_START/END: boss ENGAGE times and stable encounter IDs — the identity
---- layer (recorded since 2026-07-19; matching UI is a future design pass, see DESIGN
---- "the boss identity problem"). A failed encounter clears the pending engage.
-function R:OnEncounter(event, encounterID, success)
-    if not rec.active then return end
-    local elapsed = R:GetElapsed()
-    if not elapsed then return end
-    if event == "ENCOUNTER_START" then
-        rec.pendingEngage = { t = elapsed, id = tonumber(encounterID) }
-    elseif event == "ENCOUNTER_END" and success ~= 1 then
-        rec.pendingEngage = nil -- wipe: they'll re-pull
-    end
-end
-
-function R:OnDeathCountUpdated()
-    if not rec.active then return end
-    local n, timeLost = S:GetDeathCount()
-    if not n then return end
-    if n > (rec.deathCount or 0) then
-        local elapsed = R:GetElapsed()
-        if elapsed then rec.deaths[#rec.deaths + 1] = { elapsed, n } end
-    end
-    rec.deathCount = n
-    rec.deathTimeLost = timeLost
-end
-
-function R:OnTick()
-    if not rec.active or not rec.startTime then return end
-    if not S:IsChallengeActive() then return end
-    local now = GetTime()
-
-    -- Hold at the start line until the official timer exists (countdown running).
-    -- Anchoring also stamps startEpoch — the wall clock at the timer's zero, the Live
-    -- Run's proof of identity across a client restart (LiveRunVerdict).
+--- Glue the clock to the OFFICIAL keystone timer; returns elapsed, or nil while the
+--- pre-key countdown holds the start line. Shared by every capture path AND the
+--- ticker — an event landing right after a death penalty must stamp on the already-
+--- jumped axis, not wait half a tick for the re-anchor. Anchoring stamps
+--- startEpoch — the wall clock at the timer's zero, the Live Run's proof of
+--- identity across a client restart (LiveRunVerdict); the world timer jumps forward
+--- on deaths (the penalty is baked in), so re-anchoring on drift makes a death
+--- physically cost bar position — for you and, since recordings share this clock,
+--- for the ghost alike. GetTime smooths between whole-second timer updates.
+local function AnchorClock(now)
+    local official = S:GetWorldElapsedSec()
     if rec.awaitingTimer then
-        local official = S:GetWorldElapsedSec()
         if official then
             rec.startTime = now - official
             rec.startEpoch = S:ServerNow() - official
@@ -354,17 +350,9 @@ function R:OnTick()
             rec.startEpoch = S:ServerNow()
             rec.awaitingTimer = nil
         else
-            return
+            return nil -- countdown: parked at the start line
         end
-    end
-
-    -- Glue our clock to the OFFICIAL keystone timer. The world timer starts after the
-    -- pre-key countdown and jumps forward on deaths (the death penalty is baked into
-    -- it), so re-anchoring on drift makes a death physically cost bar position — for
-    -- you and, since recordings share this clock, for the ghost alike. GetTime keeps
-    -- the cursor smooth between whole-second timer updates.
-    local official = S:GetWorldElapsedSec()
-    if official then
+    elseif official then
         local drift = (now - rec.startTime) - official
         if drift > 1.5 or drift < -1.5 then
             rec.startTime = now - official
@@ -373,8 +361,25 @@ function R:OnTick()
             rec.startEpoch = S:ServerNow() - official
         end
     end
+    return now - rec.startTime
+end
 
-    local t = now - rec.startTime
+--- One capture: guarded ABSOLUTE reads, a node only when the state moved. Fired by
+--- the scenario-criteria events (the event's frame IS the node's timestamp), by a
+--- successful ENCOUNTER_END (belt and braces for a dropped criteria event), and by
+--- the ticker's reconcile heartbeat. Absolute reads make it self-healing: a missed
+--- or flicker-poisoned capture never corrupts, the next one lands the truth.
+local function Capture()
+    if not rec.active or not rec.startTime then return end
+    if not S:IsChallengeActive() then return end
+    local now = GetTime()
+    -- Same-frame coalescing: GetTime is frame-constant and criteria events burst
+    -- during AoE; the frame's first capture already read the settled state.
+    if rec.lastCaptureGT == now then return end
+    local t = AnchorClock(now)
+    if not t then return end -- countdown: forces can't move yet anyway
+    rec.lastCaptureGT = now
+
     local raw, total = S:ReadEnemyForcesRaw()
     -- Forces never decrease in a key: a sudden drop (> 1% of the total) means the
     -- scenario is collapsing (completion teardown fires a beat before
@@ -383,15 +388,19 @@ function R:OnTick()
     if raw + math.max(1, total * 0.01) < (rec.lastRaw or 0) then
         raw, total = rec.lastRaw, rec.lastTotal
     end
+    local countMoved = raw ~= (rec.lastRaw or 0)
     rec.lastRaw, rec.lastTotal = raw, total
     rec.lastPct = (total > 0) and (raw / total) * 100 or 0 -- derived display value
 
-    -- Boss kills are timestamped every tick (not every snapshot) for sharp split times.
-    -- Diffing per-criterion done flags (not just the count) captures which boss it was,
-    -- so the kill order carries the right name and count even on off-order routes.
+    -- Boss kills are stamped HERE — the capture whose criteria diff sees the flip,
+    -- normally the very frame it happens. Diffing per-criterion done flags (not
+    -- just the count) captures which boss it was, so the kill order carries the
+    -- right name and count even on off-order routes.
+    local killLanded = false
     for i, cs in ipairs(S:GetBossCriteriaStates()) do
         if cs.done and not rec.bossDone[i] then
             rec.bossDone[i] = true
+            killLanded = true
             local k = #rec.bossKills + 1
             rec.bossKills[k] = t
             rec.bossNames[k] = cs.name
@@ -417,9 +426,65 @@ function R:OnTick()
 
     KG.PullTrack:Update(rec.lastRaw, #rec.bossKills, t)
 
-    if now - rec.lastSnap >= SNAPSHOT_INTERVAL then
-        rec.lastSnap = now
-        rec.snapshots[#rec.snapshots + 1] = { t, rec.lastRaw, #rec.bossKills }
+    -- The change-only node: a count move lands as doubled step nodes (flat-then-
+    -- step); a kill with no count change lands as a single node — SampleAt's boss
+    -- column is already sample-and-hold, so the kill column steps exactly at t.
+    if countMoved or killLanded then
+        KG.Math.AppendStepNode(rec.snapshots, t, raw, #rec.bossKills)
+    end
+end
+
+--- SCENARIO_CRITERIA_UPDATE / SCENARIO_POI_UPDATE from Core: the count moved (or a
+--- criterion flipped) — capture NOW. Event args are ignored by design: they can be
+--- secrets on 12.0.5+, and the guarded absolute reads carry the same information.
+function R:OnScenarioUpdate()
+    Capture()
+end
+
+--- ENCOUNTER_START/END: boss ENGAGE times and stable encounter IDs — the identity
+--- layer (recorded since 2026-07-19; matching UI is a future design pass, see DESIGN
+--- "the boss identity problem"). A failed encounter clears the pending engage.
+function R:OnEncounter(event, encounterID, success)
+    if not rec.active then return end
+    local elapsed = R:GetElapsed()
+    if not elapsed then return end
+    if event == "ENCOUNTER_START" then
+        rec.pendingEngage = { t = elapsed, id = tonumber(encounterID) }
+    elseif event == "ENCOUNTER_END" then
+        if success == 1 then
+            -- The kill's criteria event usually lands the same moment; capturing
+            -- here too is change-guarded (free) and covers a dropped one.
+            Capture()
+        else
+            rec.pendingEngage = nil -- wipe: they'll re-pull
+        end
+    end
+end
+
+function R:OnDeathCountUpdated()
+    if not rec.active then return end
+    local n, timeLost = S:GetDeathCount()
+    if not n then return end
+    if n > (rec.deathCount or 0) then
+        local elapsed = R:GetElapsed()
+        if elapsed then rec.deaths[#rec.deaths + 1] = { elapsed, n } end
+    end
+    rec.deathCount = n
+    rec.deathTimeLost = timeLost
+end
+
+function R:OnTick()
+    if not rec.active or not rec.startTime then return end
+    if not S:IsChallengeActive() then return end
+    local now = GetTime()
+    local t = AnchorClock(now)
+    if not t then return end -- countdown running: hold at the start line
+
+    -- Reconcile heartbeat: a change-guarded capture, so it is a no-op while the
+    -- events deliver — and a ≤ 5 s self-heal when one goes missing.
+    if now - (rec.lastReconcile or 0) >= RECONCILE_INTERVAL then
+        rec.lastReconcile = now
+        Capture()
     end
 
     -- Live RaiderIO replay ghost: mirror its progress; and if the key started with a
@@ -501,6 +566,9 @@ function R:OnKeyEnd()
         engages = engages or {}
         engages[i] = rnd(eng)
     end
+    -- Quantization can collide a step node onto its neighbor (sub-second doubles
+    -- land on one whole second) — exact duplicates drop here: pure shrink, the
+    -- curve is unchanged.
     local snaps = {}
     for i = 1, #saved.snapshots do
         local s = saved.snapshots[i]
@@ -509,12 +577,19 @@ function R:OnKeyEnd()
         for j = 1, nBosses do
             if kills[j] <= t then k = k + 1 end
         end
-        snaps[i] = { t, c, k }
+        local prev = snaps[#snaps]
+        if not (prev and prev[1] == t and prev[2] == c and prev[3] == k) then
+            snaps[#snaps + 1] = { t, c, k }
+        end
     end
     -- The closer: parked AT the finish — full count, every boss, official duration
-    -- (clamped so quantization can never step it behind the last live sample).
+    -- (clamped so quantization can never step it behind the last live sample). The
+    -- final kill's node can BE the closer to the second — same dupe rule applies.
     local closerT = math.max(rnd(durationSec), snaps[#snaps] and snaps[#snaps][1] or 0)
-    snaps[#snaps + 1] = { closerT, total, nBosses }
+    local lastS = snaps[#snaps]
+    if not (lastS and lastS[1] == closerT and lastS[2] == total and lastS[3] == nBosses) then
+        snaps[#snaps + 1] = { closerT, total, nBosses }
+    end
     for _, d in ipairs(saved.deaths or {}) do d[1] = rnd(d[1]) end
     local bossCounts = {}
     for i = 1, nBosses do bossCounts[i] = rnd(saved.bossCounts[i] or 0) end
