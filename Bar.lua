@@ -647,19 +647,29 @@ end
 
 --- (Re)apply the player cursor icon: your raid target marker when you carry one (the
 --- tank's {square} etc. — it's how you already identify yourself on screen), else your
---- portrait. Portraits are often BLACK until the client fires a portrait update, so
---- Core re-calls this on UNIT_PORTRAIT_UPDATE and zone-in; Update calls the cached path
---- so a mid-run marker change applies within a tick.
+--- portrait. The marker index is usually a Midnight SECRET, so it is never read here:
+--- it goes straight into the C-side sprite-sheet cell pick on the 4x4 marker sheet,
+--- which accepts secrets (the EXBoss/BliZzi-proven recipe; the old readNum guard
+--- turned every secret into nil and the icon stayed portrait forever). While marked
+--- this reapplies every call — two secrets can't be diffed — so a mid-run marker
+--- change lands within a tick. Portraits are often BLACK until the client fires a
+--- portrait update, so Core re-calls this with force on UNIT_PORTRAIT_UPDATE and
+--- zone-in; the no-marker path stays cached.
 function Bar.RefreshPlayerIcon(force)
     local tex = frame and frame.playerIcon
     if not tex then return end
-    local marker = KG.Scenario:GetPlayerRaidMarker() -- guarded: secret in instances
-    local key = tostring(marker)
-    if not force and tex._kgIconKey == key then return end
-    tex._kgIconKey = key
-    if marker then
-        tex:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. marker)
-    elseif not pcall(SetPortraitTexture, tex, "player") then
+    local marker = KG.Scenario:GetPlayerRaidMarkerOpaque() -- opaque: possibly secret
+    if marker ~= nil and tex.SetSpriteSheetCell then
+        tex:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
+        if pcall(tex.SetSpriteSheetCell, tex, marker, 4, 4) then
+            tex._kgIconKey = "marker"
+            return
+        end
+        force = true -- the sheet just splatted over the icon: repaint the portrait
+    end
+    if not force and tex._kgIconKey == "portrait" then return end
+    tex._kgIconKey = "portrait"
+    if not pcall(SetPortraitTexture, tex, "player") then
         tex:SetTexture("Interface\\Icons\\Achievement_PVP_A_01")
     end
     tex:SetTexCoord(0, 1, 0, 1)
@@ -888,7 +898,7 @@ function Bar:Update()
     frame.ghostCursor:ClearAllPoints()
     frame.ghostCursor:SetPoint("LEFT", frame.track, "LEFT", gx - 1, 0)
     ApplyGhostIcon(frame.ghostIcon, ref)
-    Bar.RefreshPlayerIcon() -- cached; catches mid-run raid-marker changes
+    Bar.RefreshPlayerIcon() -- cheap; catches mid-run raid-marker changes
     frame.ghostHover:SetAlpha((gPin == 0 and 1 or 0.6) * swMul)
     frame.ghostHover:ClearAllPoints()
     frame.ghostHover:SetPoint("TOP", frame.track, "BOTTOMLEFT", gx, -1) -- ghost zone: below the track

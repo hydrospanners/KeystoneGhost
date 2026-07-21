@@ -17,6 +17,12 @@ All notable changes to Keystone Ghost are listed here.
 - The RaiderIO replay mirror (and its test-mode demo twin) record change-only
   step nodes too — the replay ghost's moves are no longer smeared up to 2 s.
 
+## [0.8.1]
+
+- Fixed: your raid target marker shows as your runner icon again. The game
+  hides marker data from addons nowadays, which made the icon always fall
+  back to your portrait.
+
 ## [0.8.0]
 
 First public release.
