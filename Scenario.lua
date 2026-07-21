@@ -161,17 +161,19 @@ function S:GetWorldElapsedSec()
     return nil
 end
 
---- Raid target marker on the player (1..8), or nil. In instances GetRaidTargetIndex can
---- return a SECRET number — type() still says "number" but any comparison throws. This
---- burned us live (Bar.lua once did the compare inline); readNum's canaccessvalue gate
---- is the only safe path.
-function S:GetPlayerRaidMarker()
+--- Raid target marker on the player — an OPAQUE value, or nil when unmarked. In 12.x
+--- the index is usually a Midnight SECRET (instances for sure, sometimes beyond):
+--- comparing/indexing it throws — that burned us live 2026-07-19 (inline compare in
+--- Bar.lua). But the readNum gate added after that burn turned every secret into nil,
+--- which silently killed the marker icon wherever it mattered (Fredrik's 2026-07-21
+--- bug report). Contract: nil-test the return, then feed it UNTOUCHED to a C-side
+--- render sink (Texture:SetSpriteSheetCell on the 4x4 UI-RaidTargetingIcons sheet —
+--- the recipe EXBoss/BliZzi/Ellesmere ship live). Never into Lua logic.
+function S:GetPlayerRaidMarkerOpaque()
     if not GetRaidTargetIndex then return nil end
     local ok, idx = pcall(GetRaidTargetIndex, "player")
     if not ok then return nil end
-    idx = readNum(idx)
-    if idx and idx >= 1 and idx <= 8 then return idx end
-    return nil
+    return idx -- possibly secret: render fuel only
 end
 
 --- The weekly-reset boundary epoch this moment belongs to — the run's reset-week
