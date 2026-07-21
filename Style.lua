@@ -17,6 +17,7 @@ local FALLBACK_ACCENT = { 0.05, 0.83, 0.62 } -- Ellesmere green
 
 Style.GREEN = { 0.3, 0.8, 0.3 }   -- Ellesmere "completed" green
 Style.RED = { 0.9, 0.35, 0.35 }
+Style.GRAY = { 0.55, 0.55, 0.55 } -- disarmed/neutral (matches Splits' pending grey)
 Style.TEXT = { 0.9, 0.9, 0.9 }    -- Ellesmere objective text color
 Style.BAR_BG = { 0.12, 0.12, 0.12, 0.9 }
 Style.TICK3 = { 0.4, 1, 0.4 }     -- +3 threshold tick
@@ -26,7 +27,9 @@ Style.TICK1 = { 0.9, 0.9, 0.9 }   -- par (+1) tick — the bar end in Ellesmere'
 -- Roster pairing colors: exact entries from MDT's rainbow pull palette (indices 5, 7,
 -- 10, 3) — hues Fredrik's eyes already know as "distinct pulls" — skipping its greens
 -- (our verdict color) and near-teals (our accent). Ring color n pairs runner n on the
--- track with roster row n; the raced ghost pairs via the GOLD ring instead.
+-- track with roster row n; the raced ghost pairs via the row highlight + full-bright
+-- icon (the pairing golds — roster plate, then badge ring — retired 2026-07-20;
+-- only the pin lock glyph stays gold).
 Style.PULL_COLORS = {
     { 0.2446, 0.2446, 1 },   -- MDT blue
     { 1, 0.2446, 1 },        -- MDT magenta
@@ -108,6 +111,30 @@ function Style.Hover(parent, w, h)
     return f
 end
 
+-- Panel chrome recipe (single source — SkinPanel applies, RefreshPanel re-applies).
+local PANEL_BG = { 0.05, 0.04, 0.08, 0.85 }
+local PANEL_BORDER = { 0.15, 0.15, 0.15, 0.6 }
+local ACCENT_ALPHA = 0.9
+
+--- Chrome opacity multiplier (Edit Mode "Background opacity" slider). Fades the
+--- backdrop, border, and accent strip ONLY — race content on top stays fully visible
+--- at any setting (Fredrik 2026-07-20; the 3-state chrome control stays deferred).
+local function ChromeAlpha()
+    local a = KG.db and KG.db.bgAlpha
+    if type(a) ~= "number" then return 1 end
+    return math.max(0, math.min(1, a))
+end
+
+local function ApplyChrome(frame)
+    local a = ChromeAlpha()
+    frame:SetBackdropColor(PANEL_BG[1], PANEL_BG[2], PANEL_BG[3], PANEL_BG[4] * a)
+    frame:SetBackdropBorderColor(PANEL_BORDER[1], PANEL_BORDER[2], PANEL_BORDER[3], PANEL_BORDER[4] * a)
+    if frame._kgAccent then
+        frame._kgAccent:SetColorTexture(Style.GetAccent())
+        frame._kgAccent:SetAlpha(ACCENT_ALPHA * a)
+    end
+end
+
 --- Ellesmere panel skin: dark backdrop, hairline border, accent strip on the right.
 function Style.SkinPanel(frame)
     frame:SetBackdrop({
@@ -115,23 +142,17 @@ function Style.SkinPanel(frame)
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = 1,
     })
-    frame:SetBackdropColor(0.05, 0.04, 0.08, 0.85)
-    frame:SetBackdropBorderColor(0.15, 0.15, 0.15, 0.6)
     if not frame._kgAccent then
         frame._kgAccent = frame:CreateTexture(nil, "BORDER")
         frame._kgAccent:SetWidth(2)
         frame._kgAccent:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
         frame._kgAccent:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 1)
     end
-    frame._kgAccent:SetColorTexture(Style.GetAccent())
-    frame._kgAccent:SetAlpha(0.9)
+    ApplyChrome(frame)
 end
 
---- Re-tint live-resolved pieces (accent strip); call from periodic refreshes so accent
---- changes in EllesmereUI's options apply without a /reload.
+--- Re-apply live-resolved pieces (accent tint, chrome opacity); called from periodic
+--- refreshes so EllesmereUI accent changes and the opacity slider apply without /reload.
 function Style.RefreshPanel(frame)
-    if frame._kgAccent then
-        frame._kgAccent:SetColorTexture(Style.GetAccent())
-        frame._kgAccent:SetAlpha(0.9)
-    end
+    if frame.SetBackdropColor and frame._kgAccent then ApplyChrome(frame) end
 end

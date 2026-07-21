@@ -8,6 +8,16 @@ NS.KG = KG
 KG.ADDON_NAME = ADDON_NAME
 KG.MAX_TIER = 3 -- chest tiers: 0 = depleted, 1..3 = +1/+2/+3
 
+-- Addon version from the TOC; "dev" outside the client (offline test harness).
+KG.VERSION = (function()
+    local get = _G.C_AddOns and _G.C_AddOns.GetAddOnMetadata
+    if get then
+        local ok, v = pcall(get, ADDON_NAME, "Version")
+        if ok and type(v) == "string" and v ~= "" then return v end
+    end
+    return "dev"
+end)()
+
 function KG.InitDB()
     _G.KeystoneGhostDB = _G.KeystoneGhostDB or {}
     local db = _G.KeystoneGhostDB
@@ -16,10 +26,29 @@ function KG.InitDB()
     if db.attach == nil then db.attach = "ellesmere" end -- docks only when the timer frame exists
     db.rosterSize = db.rosterSize or 3 -- ghost roster rows to aim for (raced + fillers)
     db.scale = db.scale or 1 -- bar + roster scale (Edit Mode slider)
+    if db.bgAlpha == nil then db.bgAlpha = 1 end -- chrome opacity (backdrop/border/accent), Edit Mode slider
     if db.bounce == nil then db.bounce = true end -- walk-cycle hop on your icon
     db.runs = db.runs or {}   -- [charKey][mapID][level] = { [tier] = run } (one slot per chest tier)
     db.pick = db.pick or {}   -- [mapID..":"..level] = { char, tier } auto-pick from imports
                               -- (manual tier override dropped 2026-07-19; pick UI is a later stage)
+    db.routes = db.routes or {} -- Route Store: [contentHash] = captured route (dossier §7);
+                                -- runs reference via run.routeHash; GC'd by Ghosts:SweepRoutes
+    for _, rd in pairs(db.routes) do -- one-time field renames (2026-07-20)
+        if rd.cum and not rd.cumulativeForces then rd.cumulativeForces, rd.cum = rd.cum, nil end
+        -- capturedAt → storedAt: the stamp marks when the STORE ENTRY was written
+        -- (run save), not when the content was frozen (key start) — renamed for truth.
+        if rd.capturedAt and not rd.storedAt then rd.storedAt, rd.capturedAt = rd.capturedAt, nil end
+    end
+    if db.shareRouteName == nil then db.shareRouteName = true end -- export: route name + creator
+    if db.shareRouteData == nil then db.shareRouteData = true end -- export: embedded route (click-to-load)
+    if db.sharePartyNames == nil then db.sharePartyNames = false end -- export: party names — OPT-IN
+                            -- (privacy default, Fredrik 2026-07-20; off = spec labels only)
+    if db.percentDisplay == nil then db.percentDisplay = true end -- forces readout: % by default;
+                            -- unticking "Show % instead of count" flips every site to raw count
+                            -- (Fredrik 2026-07-20 — an on-by-default checkbox reads naturally)
+    db.minimap = db.minimap or {} -- LibDBIcon state (hide/minimapPos/lock) — Ghost Library button
+                            -- db.libPos (Library window position) stays nil until first drag
+    db.countDisplay = nil -- stale key from the same-day default-count hour (never shipped)
     KG.db = db
     return db
 end

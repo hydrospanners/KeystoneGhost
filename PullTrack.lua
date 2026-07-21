@@ -29,26 +29,27 @@ local function Threshold()
 end
 
 --- Pure completion computation (ported verbatim in spirit from APL).
---- A non-boss pull k is complete when raw forces reach cum[k] minus the unfinished slack
---- allowed by the threshold. A boss pull completes on its boss criterion — or, anti-stall,
---- once forces climb clearly past its cumulative into the next pull.
+--- A non-boss pull k is complete when raw forces reach cumulativeForces[k] minus the
+--- unfinished slack allowed by the threshold. A boss pull completes on its boss
+--- criterion — or, anti-stall, once forces climb clearly past its cumulative into
+--- the next pull.
 --- @return completedSet, currentPull (1..nPulls, or nPulls+1 when all done)
-function Track.ComputeCompletion(cum, bossPulls, bossCompleted, raw, threshold)
+function Track.ComputeCompletion(cumulativeForces, bossPulls, bossCompleted, raw, threshold)
     local completed = {}
-    local nPulls = cum and #cum or 0
-    local routeTotal = (nPulls > 0 and cum[nPulls]) or 0
+    local nPulls = cumulativeForces and #cumulativeForces or 0
+    local routeTotal = (nPulls > 0 and cumulativeForces[nPulls]) or 0
     local bossSlack = math.max(1, routeTotal * 0.01)
-    local prevCum = 0
+    local prevCumulative = 0
     for k = 1, nPulls do
-        local ck = cum[k] or prevCum
-        local pullForces = ck - prevCum
+        local ck = cumulativeForces[k] or prevCumulative
+        local pullForces = ck - prevCumulative
         if bossPulls and bossPulls[k] then
             completed[k] = (bossCompleted and bossCompleted[k] == true) or (raw >= ck + bossSlack)
         else
             local need = ck - (1 - threshold) * pullForces
             completed[k] = raw >= need
         end
-        prevCum = ck
+        prevCumulative = ck
     end
     local current = nPulls + 1
     for k = 1, nPulls do
@@ -60,15 +61,19 @@ function Track.ComputeCompletion(cum, bossPulls, bossCompleted, raw, threshold)
     return completed, current
 end
 
---- Start tracking a run against `route` ({ cum, bossPull, nPulls }); nil to disable.
-function Track:Reset(route)
+--- Start tracking a run against `route` ({ cumulativeForces, bossPull, nPulls });
+--- nil to disable. `seedPullTimes` (Live Run adoption after a /reload) re-attaches
+--- the persisted pull-time table BY REFERENCE — recording continues into the same
+--- table; already-stamped completions are kept, everything else self-heals from
+--- absolute forces on the first Update.
+function Track:Reset(route, seedPullTimes)
     st = {
         route = route,
         bossCompleted = {},
         lastBossCount = 0,
         pending = 0,
         completed = {},
-        pullTimes = {},
+        pullTimes = seedPullTimes or {},
         currentPull = (route and route.nPulls > 0) and 1 or nil,
     }
 end
@@ -97,7 +102,7 @@ function Track:Update(raw, bossCount, t)
     end
 
     local completed, current = Track.ComputeCompletion(
-        route.cum, route.bossPull, st.bossCompleted, raw, Threshold())
+        route.cumulativeForces, route.bossPull, st.bossCompleted, raw, Threshold())
     for k = 1, route.nPulls do
         if completed[k] and not st.pullTimes[k] and t then
             st.pullTimes[k] = t

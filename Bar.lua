@@ -30,20 +30,26 @@ KG.Bar = Bar
 local WIDTH, BAR_H, TRACK_H, PAD = 360, 96, 16, 12
 local frame
 
+-- Style.GREEN / Style.RED / Splits-grey as inline escapes — for coloring single
+-- tokens inside an otherwise neutral FontString.
+local GREEN_HEX, RED_HEX, GRAY_HEX = "|cff4dcc4d", "|cffe65959", "|cff8c8c8c"
+
 -- ── Test mode: synthetic ghost + simulated player so the bar can be inspected anywhere ──
 local TEST_SPEED = 10 -- 10x: a ~28min run demos in ~3min; 20x made real data look jerky
 local test = {}
 
---- Prefer REAL recordings for the test race: if any dungeon has 3+ stored ghosts
---- (across characters/levels — key level is irrelevant for a demo), race the fastest
---- and roster the next two. Falls back to the synthetic ghost otherwise.
+--- Prefer REAL recordings for the test race: the demo follows your FRESHEST dungeon
+--- (the map whose newest run is newest overall — Fredrik 2026-07-20: the set you just
+--- played is the set you want to look at; across characters/levels, key level is
+--- irrelevant for a demo). Races the fastest, rosters up to two more. Falls back to
+--- the synthetic ghost only when nothing is stored.
 local function RealTestData()
     local byMap = {}
     for _, maps in pairs(KG.db.runs) do
         for mapID, byLevel in pairs(maps) do
             for _, tiers in pairs(byLevel) do
                 for _, run in pairs(tiers) do
-                    if run.snapshots and #run.snapshots >= 3 and run.durationSec then
+                    if run.snapshots and #run.snapshots >= 3 and run.durationSec and run.total then
                         byMap[mapID] = byMap[mapID] or {}
                         table.insert(byMap[mapID], run)
                     end
@@ -51,9 +57,11 @@ local function RealTestData()
             end
         end
     end
-    local best
+    local best, bestAt
     for _, list in pairs(byMap) do
-        if #list >= 3 and (not best or #list > #best) then best = list end
+        local at = 0
+        for _, r in ipairs(list) do at = math.max(at, r.completedAt or 0) end
+        if not best or at > bestAt then best, bestAt = list, at end
     end
     if not best then return false end
     table.sort(best, function(a, b) return a.durationSec < b.durationSec end)
@@ -64,12 +72,112 @@ local function RealTestData()
     return true
 end
 
+--- Time-scaled copy of a run (shared by the synthetic roster fillers and the Rival;
+--- never mutates the base — real DB runs pass through here in the real-data path).
+local function CopyScaled(base, f, chests, importedFrom)
+    local s2, k2 = {}, {}
+    for i, s in ipairs(base.snapshots) do s2[i] = { s[1] * f, s[2], s[3] } end
+    for i, k in ipairs(base.bossKills or {}) do k2[i] = k * f end
+    return {
+        snapshots = s2, bossKills = k2, durationSec = (base.durationSec or 0) * f,
+        total = base.total, -- same units as the base: the race compares exactly
+        bossNames = base.bossNames, bossCounts = base.bossCounts, level = base.level or 12,
+        chests = chests, routeName = base.routeName, importedFrom = importedFrom,
+        completedAt = (time and time() or 0) - 86400,
+    }
+end
+
+--- Demo mirror for the RaiderIO-only loop: the same honest semantics as the live
+--- mirror (Ghosts:UpdateRioMirror) driven by the base run instead of the RaiderIO
+--- API — the replay's data ARRIVES as the demo clock passes it, so skulls pop the
+--- moment the mirror watches a kill and never before (the first-run look, exactly).
+local function UpdateDemoRioMirror(ref, base, t)
+    local count = math.floor(M.SampleAt(base.snapshots, t) + 0.5)
+    local run = ref.run
+    for i = #run.bossKills + 1, #(base.bossKills or {}) do
+        local bk = base.bossKills[i]
+        if t < bk then break end
+        run.bossKills[i] = bk
+        run.bossCounts[i] = math.floor(M.SampleAt(base.snapshots, bk) + 0.5)
+        run.bossNames[i] = base.bossNames and base.bossNames[i] or nil
+    end
+    ref.nowCount = count
+    ref.nowBosses = #run.bossKills
+    local snaps = run.snapshots
+    local last = snaps[#snaps]
+    if not last or t - last[1] >= 2 then
+        snaps[#snaps + 1] = { t, count, ref.nowBosses }
+    end
+end
+
+--- One demo loop's cast, ALTERNATING scenarios per loop (Fredrik 2026-07-20 — the
+--- test runs again and again, so every other loop is the first-run look):
+---   odd loops, "real" — the fastest stored ghost raced + the manufactured Rival
+---   (0.65× the raced time: outpaces the sim player, clears the real No-Switch
+---   Buffer Zone, OVERTAKES about a fifth in — S10's excluded-actor case) + up to
+---   two more stored ghosts in the roster.
+---   even loops, "rio" — ONLY a simulated RaiderIO replay, full mirror semantics:
+---   the RaiderIO-only first experience, reviewable on repeat without a key.
+--- Edit Mode preview pins "real" and stays silent — positioning is not testing.
+local function SeedTestSwitch()
+    if KG.testMode then
+        test.loopN = (test.loopN or 0) + 1
+        test.scenario = (test.loopN % 2 == 1) and "real" or "rio"
+    else
+        test.scenario = "real"
+    end
+    if test.scenario == "rio" then
+        local base = test.run
+        test.rioRef = {
+            kind = "rio", live = true,
+            label = string.format("RaiderIO replay (%s)", M.FormatClock(base.durationSec or 0)),
+            durationSec = base.durationSec, rioTotal = base.total,
+            nowCount = 0, nowBosses = 0, mirrorFrom = 0,
+            nBosses = #(base.bossKills or {}),
+            run = { durationSec = base.durationSec, total = base.total,
+                snapshots = { { 0, 0, 0 } }, bossKills = {}, bossNames = {}, bossCounts = {} },
+        }
+        -- The sim player's own timeline as a run-shape: LiveDelta's you're-ahead
+        -- branch inverts YOUR curve, and the sim rides the base at t*1.12+25 — so
+        -- hand it the base curve mapped into sim-player time.
+        local ss, kk = {}, {}
+        for i, s in ipairs(base.snapshots) do
+            ss[i] = { math.max(0, (s[1] - 25) / 1.12), s[2], s[3] }
+        end
+        for i, bk in ipairs(base.bossKills or {}) do
+            kk[i] = math.max(0, (bk - 25) / 1.12)
+        end
+        test.simRun = { snapshots = ss, bossKills = kk, total = base.total }
+        test.ov = nil
+        test.attached = nil
+        print("|cff88ccffKeystoneGhost|r: test loop — RaiderIO replay only (the first-run look).")
+    else
+        test.rioRef = nil
+        test.simRun = nil
+        test.rival = CopyScaled(test.run, 0.65, 3)
+        test.ov = KG.Overtake.New(test.run, false)
+        test.attached = test.run
+        if KG.testMode then
+            print("|cff88ccffKeystoneGhost|r: test loop — full roster (your real ghosts when stored).")
+        end
+    end
+    test.lastSwitch = nil
+    test.start = GetTime()
+end
+
+--- /kg test re-enable: restart the scenario rotation at loop 1 and re-scan the DB
+--- (a run recorded since the last toggle joins the demo).
+function Bar.ResetTestLoop()
+    for k in pairs(test) do test[k] = nil end
+end
+
 local function BuildTestData()
     if RealTestData() then
-        test.start = GetTime()
+        SeedTestSwitch()
         return
     end
     local par, dur = 1800, 1620
+    local TOTAL = 300 -- synthetic dungeon total (count units; 12 pulls × 25)
     local bossKills = { 420, 900, 1380 }
     local snaps = {}
     local function trashTime(t) -- forces freeze during the last 60s before each boss kill
@@ -81,41 +189,32 @@ local function BuildTestData()
         return tt
     end
     for t = 0, dur, 30 do
-        local pct = math.min(100, trashTime(t) / (dur - 60 * #bossKills) * 100)
+        local count = math.floor(math.min(TOTAL, trashTime(t) / (dur - 60 * #bossKills) * TOTAL) + 0.5)
         local bosses = 0
         for _, bk in ipairs(bossKills) do if t >= bk then bosses = bosses + 1 end end
-        snaps[#snaps + 1] = { t, pct, bosses }
+        snaps[#snaps + 1] = { t, count, bosses }
     end
-    snaps[#snaps + 1] = { dur, 100, #bossKills }
-    local pcts = {}
-    for i, bk in ipairs(bossKills) do pcts[i] = M.SampleAt(snaps, bk) end
+    snaps[#snaps + 1] = { dur, TOTAL, #bossKills }
+    local counts = {}
+    for i, bk in ipairs(bossKills) do counts[i] = M.SampleAt(snaps, bk) end
     test.run = {
-        snapshots = snaps, bossKills = bossKills, durationSec = dur,
+        snapshots = snaps, bossKills = bossKills, durationSec = dur, total = TOTAL,
         bossNames = { "Test Boss One", "Test Boss Two", "Test Boss Three" },
-        bossPcts = pcts, level = 12, chests = 2,
+        bossCounts = counts, level = 12, chests = 2,
         deaths = { { 700, 1 }, { 710, 2 } },
         routeName = "Test route",
     }
     -- Two manufactured roster fillers (time-scaled copies of the base run) so /kg test
     -- exercises the full 3-row roster: a slower own +1 and a faster "imported" +3.
-    local function ScaledRun(f, chests, importedFrom)
-        local s2, k2 = {}, {}
-        for i, s in ipairs(snaps) do s2[i] = { s[1] * f, s[2], s[3] } end
-        for i, k in ipairs(bossKills) do k2[i] = k * f end
-        return {
-            snapshots = s2, bossKills = k2, durationSec = dur * f,
-            bossNames = test.run.bossNames, bossPcts = pcts, level = 12,
-            chests = chests, routeName = "Test route", importedFrom = importedFrom,
-            completedAt = (time and time() or 0) - 86400,
-        }
-    end
-    test.run2 = ScaledRun(1.09, 1)                                -- own +1, 29:26
-    test.run3 = ScaledRun(0.926, 3, "Boonkerz-TarrenMill-DRUID")  -- imported +3, 25:00
+    test.run2 = CopyScaled(test.run, 1.09, 1)                                -- own +1, 29:26
+    test.run3 = CopyScaled(test.run, 0.926, 3, "Boonkerz-TarrenMill-DRUID")  -- imported +3, 25:00
     test.par = par
-    test.start = GetTime()
-    -- 12 even pulls over a 300-count dungeon for the pull indicator preview.
-    test.route = { cum = {}, nPulls = 12, name = "Test route" }
-    for i = 1, 12 do test.route.cum[i] = 25 * i end
+    -- 12 even pulls over a 300-count dungeon for the pull indicator preview; the
+    -- createdBy sample shows the class-colored creator token in the demo.
+    test.route = { cumulativeForces = {}, nPulls = 12, name = "Test route",
+        createdBy = { name = "Boonkerz", classFile = select(2, UnitClass("player")) } }
+    for i = 1, 12 do test.route.cumulativeForces[i] = 25 * i end
+    SeedTestSwitch()
 end
 
 local function TestTag(run)
@@ -125,9 +224,14 @@ end
 local function TestState()
     if not test.run then BuildTestData() end
     local elapsed = (GetTime() - test.start) * TEST_SPEED
-    if elapsed > test.run.durationSec * 1.05 then test.start = GetTime(); elapsed = 0 end
+    if elapsed > test.run.durationSec * 1.05 then
+        SeedTestSwitch() -- loop wrap: fresh race, fresh Switch state
+        elapsed = 0
+    end
     local simT = elapsed * 1.12 + 25 -- simulated player: head start + growing lead
-    local pct = M.SampleAt(test.run.snapshots, simT)
+    local total = test.run.total or 300
+    local raw = M.SampleAt(test.run.snapshots, simT) -- sim player rides the ghost's curve
+    local pct = M.Frac(raw, total)
     local bosses, liveKills = 0, {}
     for _, bk in ipairs(test.run.bossKills or {}) do
         if simT >= bk then
@@ -135,9 +239,7 @@ local function TestState()
             liveKills[bosses] = math.max(0, (bk - 25) / 1.12) -- when the sim player got there
         end
     end
-    local roster = {}
-    if test.run3 then roster[#roster + 1] = { run = test.run3, tag = TestTag(test.run3) } end
-    if test.run2 then roster[#roster + 1] = { run = test.run2, tag = TestTag(test.run2) } end
+
     -- Simulated group deaths (Fredrik 2026-07-19: verify the Knockback + Death Pot in
     -- the demo): one death, then two in a row, then one — repeating every ~30
     -- sim-seconds, so both the single stumble and the pot-gathered double show.
@@ -150,14 +252,74 @@ local function TestState()
         dDouble = not dDouble
         dT = dT + 30
     end
+
+    -- Even loops race ONLY the simulated replay (SeedTestSwitch alternates): the
+    -- mirror grows with the sim clock, no Rival, no fillers, no Switch — the bar
+    -- exactly as a first-run user with zero stored ghosts sees it.
+    if test.scenario == "rio" and test.rioRef then
+        UpdateDemoRioMirror(test.rioRef, test.run, elapsed)
+        return {
+            elapsed = elapsed, pct = pct, bosses = bosses, liveKills = liveKills, par = test.par,
+            liveNames = test.run.bossNames, liveCounts = test.run.bossCounts,
+            raw = raw, total = total, route = test.route,
+            liveRun = test.simRun, -- the sim player's own curve: LiveDelta's ahead-branch input
+            deathCount = deaths, deathTimeLost = deaths * 15,
+            ref = test.rioRef,
+            roster = { { run = test.rioRef.run, tag = "RIO" } },
+            lastSwitch = nil,
+            pinned = false,
+        }
+    end
+
+    -- The Raced-Ghost Switch, demo edition: the same Overtake core on the sim clock
+    -- (guards run in sim-seconds — quick, but every stage shows). The Rival crosses
+    -- the sim player about a fifth into the loop and takes over the race.
+    local nBosses = #(test.run.bossKills or {})
+    local raced = test.attached or test.run
+    -- The demo cast in its STABLE roster order (raced included — the Roster Panel
+    -- highlights in place, it never reorders; the base run leads so the demo
+    -- starts highlighted on row 1 and the Rival's Overtake moves the mark).
+    local cast = { test.run, test.rival, test.run3, test.run2 }
+    local runners = {}
+    for _, rn in ipairs(cast) do
+        if rn and rn ~= raced then
+            local course = M.CourseAt(rn, elapsed, nBosses)
+            runners[#runners + 1] = { id = rn, course = course, parked = course >= 1 }
+        end
+    end
+    local winner = test.ov and KG.Overtake.Evaluate(test.ov, elapsed,
+        M.CoursePos(pct, bosses, nBosses), runners,
+        { buffer = KG.Overtake.BUFFER_FRAC * M.VIS }) or nil
+    if winner then
+        test.attached = winner
+        test.lastSwitch = { at = GetTime(), run = winner }
+        raced = winner
+    end
+
+    local label
+    if raced == test.run then
+        label = test.label or "Test ghost (27:00)"
+    elseif raced == test.rival then
+        label = "Rival ghost (" .. M.FormatClock(raced.durationSec or 0) .. ")"
+    else
+        local rr = KG.Ghosts:RefForRun(raced)
+        label = rr and rr.label or "Test ghost"
+    end
+    local roster = {}
+    for _, rn in ipairs(cast) do
+        if rn then
+            roster[#roster + 1] = { run = rn, tag = rn == test.rival and "Rival" or TestTag(rn) }
+        end
+    end
     return {
         elapsed = elapsed, pct = pct, bosses = bosses, liveKills = liveKills, par = test.par,
-        liveNames = test.run.bossNames, livePcts = test.run.bossPcts,
-        raw = pct * 3, total = 300, route = test.route,
+        liveNames = test.run.bossNames, liveCounts = test.run.bossCounts,
+        raw = raw, total = total, route = test.route,
         deathCount = deaths, deathTimeLost = deaths * 15,
-        ref = { kind = "test", label = test.label or "Test ghost (27:00)",
-            run = test.run, durationSec = test.run.durationSec },
+        ref = { kind = "test", label = label, run = raced, durationSec = raced.durationSec },
         roster = roster,
+        lastSwitch = test.lastSwitch,
+        pinned = test.ov ~= nil and test.ov.pinned or false,
     }
 end
 
@@ -170,17 +332,21 @@ function Bar.GetLiveState()
     local elapsed = R:GetElapsed()
     local pct, bosses = R:GetProgress()
     if not elapsed then return nil end
-    local liveNames, livePcts, seededKills, liveIDs = R:GetBossMeta()
+    local liveNames, liveCounts, seededKills, liveIDs = R:GetBossMeta()
     local raw, total = R:GetRawForces()
     local mapID, level = R:GetContext()
+    local route = R:GetRoute()
     return {
         elapsed = elapsed, pct = pct, bosses = bosses, liveKills = R:GetBossKills(),
-        liveNames = liveNames, livePcts = livePcts, seededKills = seededKills, liveIDs = liveIDs,
-        liveRun = R:GetLiveRun(), raw = raw, total = total, route = R:GetRoute(),
+        liveNames = liveNames, liveCounts = liveCounts, seededKills = seededKills, liveIDs = liveIDs,
+        liveRun = R:GetLiveRun(), raw = raw, total = total, route = route,
         trackerPull = R:GetTrackerPull(),
-        roster = mapID and KG.Ghosts:GetRoster(mapID, level, R.currentRef and R.currentRef.run) or nil,
+        -- Stable roster: keyed to YOUR route, never to the raced ghost — a switch
+        -- moves the highlight, not the rows (Fredrik 2026-07-20).
+        roster = mapID and KG.Ghosts:GetRoster(mapID, level, route and route.name) or nil,
         deathCount = R:GetDeathCountLive(), deathTimeLost = select(2, R:GetDeathCountLive()),
         par = R:GetParTime(), ref = R.currentRef,
+        lastSwitch = R.lastSwitch, pinned = R:IsPinned(),
     }
 end
 local LiveState = Bar.GetLiveState
@@ -267,18 +433,21 @@ local function Build()
 
     frame.ghostCursor = Tick(frame.track, { Style.GetAccent() }, 2, 0.95)
     frame.ghostHover = Hover(frame.track, 24, 24)
-    -- Golden ring + round class icon: "whose ghost is this" at a glance. Non-character
-    -- ghosts show the RaiderIO logo (replay) or the pocket watch (pace), no ring.
-    frame.ghostRing = frame.ghostHover:CreateTexture(nil, "ARTWORK")
-    frame.ghostRing:SetSize(22, 22)
-    frame.ghostRing:SetPoint("CENTER")
-    frame.ghostRing:SetTexture("Interface\\COMMON\\Indicator-Gray")
-    frame.ghostRing:SetVertexColor(1, 0.82, 0.15)
+    -- Round class icon: "whose ghost is this" at a glance (RaiderIO logo for replays,
+    -- pocket watch for pace ghosts). The gold ring retired 2026-07-20: it paired with
+    -- the roster's gold plate, and with that gone it indicated nothing — the badge
+    -- reads by position (on the accent cursor), size, and full brightness.
     frame.ghostIcon = frame.ghostHover:CreateTexture(nil, "OVERLAY")
     frame.ghostIcon:SetSize(16, 16)
     frame.ghostIcon:SetPoint("CENTER")
     frame.ghostIcon:SetTexture("Interface\\Icons\\INV_Misc_PocketWatch_01")
     frame.ghostIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    -- Click the badge: load the raced ghost's embedded route into MDT (confirm
+    -- popup; silent when the ghost carries none — the tooltip says when it does).
+    frame.ghostHover:SetScript("OnMouseUp", function(_, button)
+        if button == "LeftButton" then Bar.TryLoadRacedRoute() end
+    end)
 
     frame.playerCursor = Tick(frame.track, Style.GREEN, 2, 1)
     frame.playerHover = Hover(frame.track, 20, 18)
@@ -297,6 +466,23 @@ local function Build()
     local land = walk:CreateAnimation("Translation")
     land:SetOffset(0, -2.5); land:SetDuration(0.16); land:SetOrder(2); land:SetSmoothing("IN")
     frame.walkAnim = walk
+
+    -- Dazed (DESIGN follow-up): while the icon recovers from a death Knockback it
+    -- wobbles — the death-penalty period reads on the character itself, not just as
+    -- lost ground. Net rotation per loop is zero, so stopping never leaves a tilt.
+    -- SLIGHT by order (Fredrik field verdict 2026-07-20 evening): recovery walks
+    -- the icon back while dazed, so hop + rotation play together — at ±18° that
+    -- read as "walking does half-rotations". The walk itself never rotates; the
+    -- wobble stays death-only and subtle.
+    local dazed = frame.playerIcon:CreateAnimationGroup()
+    dazed:SetLooping("REPEAT")
+    local r1 = dazed:CreateAnimation("Rotation")
+    r1:SetDegrees(6); r1:SetDuration(0.12); r1:SetOrder(1); r1:SetSmoothing("IN_OUT")
+    local r2 = dazed:CreateAnimation("Rotation")
+    r2:SetDegrees(-12); r2:SetDuration(0.24); r2:SetOrder(2); r2:SetSmoothing("IN_OUT")
+    local r3 = dazed:CreateAnimation("Rotation")
+    r3:SetDegrees(6); r3:SetDuration(0.12); r3:SetOrder(3); r3:SetSmoothing("IN_OUT")
+    frame.dazedAnim = dazed
 
     -- No elapsed clock: every M+ timer addon shows it; internally elapsed stays the
     -- recorder's backbone. Bottom row is the pull indicator only.
@@ -328,21 +514,26 @@ end
 
 --- Roster runners: each non-raced roster ghost drawn as a small racer on the road,
 --- wearing its roster pairing ring (Style.PULL_COLORS by roster order).
-local function Runner(i)
+local function Runner(i, colorIdx)
     local f = frame.runners[i]
     if not f then
         f = Hover(frame.track, 16, 16)
-        -- Full-bright WHITE8x8 plate: tinting a dark sphere made rings invisible.
+        -- ROUND pairing plate (Fredrik 2026-07-20, Live Test 1: square frames read
+        -- as clutter — "make them a round border or remove the color"). A tinted
+        -- circle texture (the Details-proven TempPortraitAlphaMaskSmall trick);
+        -- the round class icon on top leaves it visible as a ~2 px ring.
         f.border = f:CreateTexture(nil, "ARTWORK")
         f.border:SetSize(16, 16)
         f.border:SetPoint("CENTER")
-        f.border:SetTexture("Interface\\Buttons\\WHITE8x8")
+        f.border:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMaskSmall")
         f.tex = f:CreateTexture(nil, "OVERLAY")
         f.tex:SetSize(12, 12)
         f.tex:SetPoint("CENTER")
         frame.runners[i] = f
     end
-    local c = Style.PULL_COLORS[(i - 1) % #Style.PULL_COLORS + 1]
+    -- Pairing color keyed to the ghost's STABLE roster position (colorIdx), not
+    -- the lane ordinal: a Raced-Ghost Switch must never recolor the survivors.
+    local c = Style.PULL_COLORS[((colorIdx or i) - 1) % #Style.PULL_COLORS + 1]
     f.border:SetVertexColor(c[1], c[2], c[3])
     return f
 end
@@ -362,11 +553,11 @@ end
 Bar.ApplyRunnerIconTo = ApplyRunnerIcon -- (tex, run) — roster rows mirror their runner
 
 --- Ghost cursor icon by reference kind: character ghosts (own / imported) show the
---- round class icon in the golden ring — class COLOR block as fallback when the icon
---- coords are unavailable; the RaiderIO replay wears the RaiderIO logo; pace ghosts the
---- watch. (The raid marker belongs to the PLAYER cursor — mixed up once, 2026-07-19.
+--- round class icon — class COLOR block as fallback when the icon coords are
+--- unavailable; the RaiderIO replay wears the RaiderIO logo; pace ghosts the watch.
+--- (The raid marker belongs to the PLAYER cursor — mixed up once, 2026-07-19.
 --- Iteration idea on file: a faded portrait of the ghost's character.)
-local function ApplyGhostIcon(iconTex, ringTex, ref)
+local function ApplyGhostIcon(iconTex, ref)
     local key = ref.kind .. "|" .. tostring(ref.run and ref.run.importedFrom or "")
     if iconTex._kgIconKey == key then return end
     iconTex._kgIconKey = key
@@ -378,14 +569,13 @@ local function ApplyGhostIcon(iconTex, ringTex, ref)
     elseif ref.kind == "import" and ref.run and ref.run.importedFrom then
         classToken = ref.run.importedFrom:match("%-([^%-]+)$")
     end
-    -- Bright round class icon in the gold ring (the tinted Indicator-Gray disc rendered
-    -- muddy-dark in the field — vertex color multiplies, it can't brighten).
+    -- Bright round class icon (a TINTED disc rendered muddy-dark in the field —
+    -- vertex color multiplies, it can't brighten — so the icon must be bright itself).
     local coords = classToken and _G.CLASS_ICON_TCOORDS and _G.CLASS_ICON_TCOORDS[classToken]
     if coords then
         iconTex:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
         iconTex:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
         iconTex:SetVertexColor(1, 1, 1)
-        ringTex:Show()
         return
     end
     local color = classToken and _G.RAID_CLASS_COLORS and _G.RAID_CLASS_COLORS[classToken]
@@ -394,7 +584,6 @@ local function ApplyGhostIcon(iconTex, ringTex, ref)
         iconTex:SetTexCoord(0, 1, 0, 1)
         iconTex:SetVertexColor(color.r, color.g, color.b)
         iconTex:SetSize(12, 12)
-        ringTex:Show()
         return
     end
 
@@ -406,20 +595,51 @@ local function ApplyGhostIcon(iconTex, ringTex, ref)
             iconTex:SetTexture(icon)
             iconTex:SetTexCoord(0, 1, 0, 1)
             iconTex:SetVertexColor(1, 1, 1)
-            ringTex:Hide()
             return
         end
     end
     iconTex:SetTexture("Interface\\Icons\\INV_Misc_PocketWatch_01")
     iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     iconTex:SetVertexColor(1, 1, 1)
-    ringTex:Hide()
 end
-Bar.ApplyRefIconTo = ApplyGhostIcon -- (iconTex, ringTex, ref) — the raced row mirrors the badge
+Bar.ApplyRefIconTo = ApplyGhostIcon -- (iconTex, ref) — the raced row mirrors the badge
 
 --- Roster-hover preview target (Splits sets/clears this).
 function Bar.SetPreviewRun(run)
     Bar._previewRun = run
+end
+
+--- Roster Panel row click → the Raced-Ghost Switch (S9): a non-raced row switches
+--- AND pins; the raced row toggles the pin. Test mode drives the demo's Overtake
+--- state so the whole flow is clickable in /kg test; live clicks go to the Recorder.
+function Bar.HandleRowClick(run)
+    if not run then return end
+    if KG.testMode or KG.editModePreview then
+        if not test.ov then return end
+        local raced = test.attached or test.run
+        if run == raced then
+            if test.ov.pinned then KG.Overtake.Unpin(test.ov) else KG.Overtake.Pin(test.ov) end
+        else
+            KG.Overtake.ManualSwitch(test.ov, run)
+            test.attached = run
+            test.lastSwitch = { at = GetTime(), run = run }
+        end
+    else
+        KG.Recorder:HandleRowClick(run)
+    end
+    Bar:Refresh()
+    KG.Splits:Refresh()
+end
+
+--- The badge click ("WHAT IF you could click that and it would be the route?!" —
+--- Fredrik 2026-07-20): resolve the raced ghost's Route Store entry (live race or
+--- Finish Photo) and hand it to the confirm-then-load flow. No-op without one.
+function Bar.TryLoadRacedRoute()
+    local st = LiveState()
+    local ref = (st and st.ref) or (KG.Recorder.summary and KG.Recorder.summary.ref)
+    local rd = ref and ref.run and ref.run.routeHash
+        and KG.Ghosts:RouteForHash(ref.run.routeHash) or nil
+    if rd then KG.RequestRouteLoad(rd) end
 end
 
 --- (Re)apply the player cursor icon: your raid target marker when you carry one (the
@@ -472,10 +692,20 @@ function Bar:Update()
     Style.RefreshPanel(frame)
     local ref = st.ref
     local W = frame.track:GetWidth() or WIDTH
+    -- Forces readout mode (the count display toggle): percent is the default
+    -- ("Show % instead of count" ON); unticking flips every site to raw count.
+    -- Display-only — every value below stays count-native regardless.
+    local countMode = KG.db.percentDisplay == false
+    -- Raced-Ghost Switch presentation (S7): for ~0.4 s after a switch the ghost-owned
+    -- marks (cursor, badge, milestone skulls) fade IN — the change reads as watched,
+    -- not glitched. The numbers need no handling: title, Gap, Count Gap, and Zone all
+    -- re-derive from the new ref in this same tick (S8).
+    local swAge = st.lastSwitch and (GetTime() - st.lastSwitch.at) or nil
+    local swMul = (swAge and swAge < 0.4) and (0.15 + 0.85 * swAge / 0.4) or 1
     -- THE ROAD, seen through the Mario camera: YOU sit at the ¼ anchor while the
     -- dungeon scrolls toward you; near the finish the camera stops and you drive the
     -- last stretch to the line. Everything off-window pins to the edges (future bosses
-    -- queue at the right and detach into view as you approach).
+    -- stack in one pile at the right and detach into view as you approach).
     local nBosses = ref.nBosses or (ref.run.bossKills and #ref.run.bossKills) or 0
     -- Course motion: each boss owns a STRETCH of road (it owns a stretch of the run's
     -- time); the kill unlocks it. Movement is speed-capped, so a runner walks BRISKLY
@@ -496,7 +726,7 @@ function Bar:Update()
     end
     local youCourse = ease(frame._smYou, M.CoursePos(st.pct, st.bosses, nBosses))
     frame._smYou = youCourse
-    local VIS = 0.45 -- zoomed out a notch from 0.35 (Fredrik: calmer motion per pixel)
+    local VIS = M.VIS -- 0.45: zoomed out a notch from 0.35 (Fredrik: calmer motion per pixel)
     local camLo = M.Camera(youCourse, VIS, 0.25)
     local vx = function(course) return ((course or 0) - camLo) / VIS end
     local px = function(course) return math.max(0, math.min(1, vx(course))) * W end
@@ -553,50 +783,77 @@ function Bar:Update()
     local kills = ref.run and ref.run.bossKills or nil
     local nKills = kills and #kills or 0
     local names = (ref.run and ref.run.bossNames) or st.liveNames or {}
-    local ghostPcts = (ref.run and ref.run.bossPcts) or {}
+    local ghostCounts = (ref.run and ref.run.bossCounts) or {}
+    local gTotal = (ref.run and ref.run.total) or 100 -- ghost's own count units
     -- Identity pairing (SCENARIOS C2): ghost column i ↔ YOUR kill of the same
     -- encounterID — feeds the laps and the tooltip "You:" lines ONLY. Skull fade is
     -- count-based (milestone semantics, decision D1); kill-order fallback where IDs
     -- are missing (legacy/seeded data).
     local laps, lapMatch = M.LapDeltasByID(st.liveKills or {}, kills or {},
         st.liveIDs, ref.run and ref.run.bossIDs)
-    local rightStack = 0 -- future bosses queue at the camera's right edge
     for i = 1, nKills do
         local f = BossTick(i)
         f:ClearAllPoints()
         -- Boss = a fixed landmark on the road: the course position where the ghost
-        -- stood while fighting it (its forces% at the kill + the segments already won).
-        local atPct = ghostPcts[i] or M.SampleAt(ref.run.snapshots, kills[i])
-        local bossCourse = M.CoursePos(atPct, i - 1, nBosses)
-        local pin = pinned(bossCourse)
-        if pin == -1 then
-            f:Hide() -- scrolled off behind the camera: done content
-        elseif pin == 1 then
-            -- queued at the edge; detaches into view as you approach
-            f:SetPoint("CENTER", frame.track, "LEFT", W - 5 - rightStack * 7, 0)
-            rightStack = rightStack + 1
-        else
-            f:SetPoint("CENTER", frame.track, "LEFT", px(bossCourse), 0)
+        -- stood while fighting it (its count at the kill + the segments already won).
+        -- HONEST PLACEMENT ONLY (Fredrik's Live Test 1 field report — evenly spread
+        -- phantom skulls vs a RaiderIO replay): the live mirror only knows counts
+        -- for the span we actually watched. A kill outside that span has no known
+        -- count — its skull is hidden rather than guessed (the kill itself stays in
+        -- bossKills, so the Gap's boss constraint is untouched). Recorded ghosts
+        -- always carry their full curve and are unaffected.
+        local atCount = ghostCounts[i]
+        if not atCount then
+            if ref.live then
+                local snaps = ref.run.snapshots
+                local lastT = snaps[#snaps] and snaps[#snaps][1] or 0
+                if kills[i] >= (ref.mirrorFrom or 0) and kills[i] <= lastT then
+                    atCount = M.SampleAt(snaps, kills[i])
+                end
+            else
+                atCount = M.SampleAt(ref.run.snapshots, kills[i])
+            end
         end
-        if pin ~= -1 then f:SetAlpha(pin == 1 and 0.6 or 1) end
+        local atPct = atCount and M.Frac(atCount, gTotal)
+        local bossCourse = atPct and M.CoursePos(atPct, i - 1, nBosses)
+        local pin = bossCourse and pinned(bossCourse) or -1
+        if pin == -1 then
+            f:Hide() -- scrolled off behind the camera (or count unknown): not drawn
+        else
+            if pin == 1 then
+                -- Queued at the edge: future milestones STACK in one pile at the wall
+                -- (Fredrik 2026-07-20 — the 7 px fan read as clutter); each detaches to
+                -- its own road position as it scrolls into the camera window.
+                f:SetPoint("CENTER", frame.track, "LEFT", W - 5, 0)
+            else
+                f:SetPoint("CENTER", frame.track, "LEFT", px(bossCourse), 0)
+            end
+            -- In the pile the NEXT milestone sits on top, so the stack's hover
+            -- tooltip describes the kill you'll reach first, not the last one.
+            f:SetFrameLevel(frame.track:GetFrameLevel() + 1 + (pin == 1 and (nKills - i) or 0))
+            f:SetAlpha((pin == 1 and 0.6 or 1) * swMul)
+        end
         -- Milestone semantics (DESIGN "Decisions in force", 2026-07-19): the skull
         -- claims "the ghost's i-th kill happened here" — a fact about the ghost's
         -- recording, true whatever order YOU kill bosses in. The name is shown as
         -- ghost history, never as a promise about your next boss.
         local when = M.FormatClock(kills[i])
-            .. (ghostPcts[i] and string.format(" · %.0f%% count", ghostPcts[i]) or "")
+            .. (ghostCounts[i] and (" · " .. M.FormatForcesLevel(ghostCounts[i], gTotal, countMode, 0) .. " count") or "")
+        -- Journal-first name (localized on THIS client when the ghost carries a
+        -- journal ID); the stored scrape via names[] is the fallback.
+        local nm = (ref.run and KG.Ghosts:BossDisplayName(ref.run, i)) or names[i]
         local tip = {
             string.format("Ghost's %s kill", Ordinal(i)),
-            (names[i] and (names[i] .. " at ") or "At ") .. when,
+            (nm and (nm .. " at ") or "At ") .. when,
         }
         local j = lapMatch[i] -- YOUR kill of the SAME boss (encounterID; order fallback)
         local lk = j and st.liveKills and st.liveKills[j]
         if lk and st.seededKills and j <= st.seededKills then
             tip[#tip + 1] = "You: killed before your reload (no lap time)"
         elseif lk then
-            local lp = st.livePcts and st.livePcts[j]
+            local lc = st.liveCounts and st.liveCounts[j]
             tip[#tip + 1] = string.format("You: dead at %s%s  (lap %s)", M.FormatClock(lk),
-                lp and string.format(" · %.0f%% count", lp) or "", M.FormatDelta(laps[i]))
+                lc and (" · " .. M.FormatForcesLevel(lc, st.total, countMode, 0) .. " count") or "", M.FormatDelta(laps[i]))
         end
         f.tip = tip
         -- Milestones fade by COUNT: your 2nd kill puts the ghost's 2nd-kill milestone
@@ -616,7 +873,7 @@ function Bar:Update()
     local aR, aG, aB = Style.GetAccent()
     local ghostCourse
     if ref.live then
-        ghostCourse = M.CoursePos(ref.nowPct or 0, ref.nowBosses or 0, nBosses)
+        ghostCourse = M.CoursePos(M.Frac(ref.nowCount, gTotal), ref.nowBosses or 0, nBosses)
     else
         ghostCourse = M.CourseAt(ref.run, st.elapsed, nBosses)
     end
@@ -624,25 +881,39 @@ function Bar:Update()
     frame._smGhost = ghostCourse
     local gx = px(ghostCourse)
     local gPin = pinned(ghostCourse) -- ghost beyond the camera: pinned at an edge, dimmed
-    frame.ghostCursor:SetVertexColor(aR, aG, aB, gPin == 0 and 0.95 or 0.4)
+    frame.ghostCursor:SetVertexColor(aR, aG, aB, (gPin == 0 and 0.95 or 0.4) * swMul)
     frame.ghostCursor:ClearAllPoints()
     frame.ghostCursor:SetPoint("LEFT", frame.track, "LEFT", gx - 1, 0)
-    ApplyGhostIcon(frame.ghostIcon, frame.ghostRing, ref)
+    ApplyGhostIcon(frame.ghostIcon, ref)
     Bar.RefreshPlayerIcon() -- cached; catches mid-run raid-marker changes
-    frame.ghostHover:SetAlpha(gPin == 0 and 1 or 0.6)
+    frame.ghostHover:SetAlpha((gPin == 0 and 1 or 0.6) * swMul)
     frame.ghostHover:ClearAllPoints()
     frame.ghostHover:SetPoint("TOP", frame.track, "BOTTOMLEFT", gx, -1) -- ghost zone: below the track
 
+    -- Ghost "now" state (in the GHOST's own count units): shared by the Gap (arming +
+    -- inversion), the Count Gap, and the hover tooltips further down.
+    local ghostCountNow = ref.live and (ref.nowCount or 0) or M.SampleAt(ref.run.snapshots, st.elapsed)
+    local ghostPctNow = M.Frac(ghostCountNow, gTotal) -- derived display value
+    local ghostBossesNow = 0
+    for i = 1, nKills do
+        if kills[i] <= st.elapsed then ghostBossesNow = ghostBossesNow + 1 end
+    end
+    -- The Gap arms at first blood (SCENARIOS B9): until BOTH runners have progress,
+    -- the inversion reads "time since the gates opened" — not a real deficit.
+    local gapArmed = M.HasProgress(st.raw, st.bosses) and M.HasProgress(ghostCountNow, ghostBossesNow)
+
     -- Your road position is simply your progress; the SECONDS delta (for the text and
     -- zone color) still comes from timeline inversion — two views of the same race.
+    -- The live state goes in as (count, total): same-total ghosts compare exact
+    -- integers, cross-total (linear/RaiderIO/season-retune) maps through fractions.
     local eq
     if ref.live then
         -- Live ghost (RaiderIO replay): its future is unknown, so use the bidirectional
         -- delta — invert whichever timeline (the ghost's mirror or your own) can answer.
-        eq = st.elapsed + M.LiveDelta(ref.run, ref.nowPct or 0, ref.nowBosses or 0,
-            st.liveRun or { snapshots = {} }, st.elapsed, st.pct, st.bosses)
+        eq = st.elapsed + M.LiveDelta(ref.run, ref.nowCount or 0, ref.nowBosses or 0,
+            st.liveRun or { snapshots = {} }, st.elapsed, st.raw, st.bosses, st.total)
     else
-        eq = M.GhostTimeFor(ref.run, st.pct, st.bosses)
+        eq = M.GhostTimeFor(ref.run, st.raw, st.bosses, st.total)
     end
     local ex = px(youCourse) -- normally parked at the camera anchor
 
@@ -696,6 +967,12 @@ function Bar:Update()
     else
         frame._kb = nil -- fully stood up; a waiting pot fires next tick
     end
+    -- Dazed while knocked: wobble runs exactly as long as the recovery does.
+    if frame._kb and not frame.dazedAnim:IsPlaying() then
+        frame.dazedAnim:Play()
+    elseif not frame._kb and frame.dazedAnim:IsPlaying() then
+        frame.dazedAnim:Stop()
+    end
     local exV = ex - (frame._kb or 0) -- visual position; ex stays the logical anchor
 
     -- Walk while moving, stand at bosses (course frozen while forces stall). Note:
@@ -718,15 +995,17 @@ function Bar:Update()
 
     local delta = eq - st.elapsed
     local good, bad = Style.GREEN, Style.RED
-    local dc = (delta >= 0) and good or bad
-    frame.delta:SetText(M.FormatDelta(delta))
+    -- Disarmed: grey unsigned 0:00 — "race not measurable yet", never a phantom deficit.
+    local dc = gapArmed and ((delta >= 0) and good or bad) or Style.GRAY
+    frame.delta:SetText(gapArmed and M.FormatDelta(delta) or "0:00")
     frame.delta:SetTextColor(dc[1], dc[2], dc[3])
     frame.playerCursor:SetVertexColor(dc[1], dc[2], dc[3], 1)
 
     local lo, hi = math.min(gx, exV), math.max(gx, exV)
     local bw = hi - lo
-    if bw >= 1 then
+    if gapArmed and bw >= 1 then
         local br, bg2, bb
+        local pulse = 0
         if delta >= 0 then
             br, bg2, bb = good[1], good[2], good[3]
         else
@@ -734,13 +1013,23 @@ function Bar:Update()
             local sev = M.BehindSeverity(delta, ref.durationSec, st.par)
             if sev then
                 br, bg2, bb = 0.6 + 0.32 * sev, 0.6 - 0.28 * sev, 0.6 - 0.28 * sev
+                -- Angry Sweeper red (DESIGN follow-up): near-certain depletion is the
+                -- SWEEPER's territory, and its red must read angrier than any other
+                -- red on the track — hotter, more saturated, and slowly pulsing.
+                if sev > 0.75 then
+                    local anger = (sev - 0.75) / 0.25
+                    br = br + (1 - br) * anger
+                    bg2 = bg2 * (1 - 0.55 * anger)
+                    bb = bb * (1 - 0.55 * anger)
+                    pulse = anger * (0.12 + 0.10 * math.sin(GetTime() * 4))
+                end
             else
                 br, bg2, bb = bad[1], bad[2], bad[3]
             end
         end
         local z = frame.gapZone
-        z._faint:SetRGBA(br, bg2, bb, 0.1)
-        z._strong:SetRGBA(br, bg2, bb, 0.55)
+        z._faint:SetRGBA(br, bg2, bb, 0.1 + pulse * 0.5)
+        z._strong:SetRGBA(br, bg2, bb, 0.55 + pulse)
         if exV >= gx then -- you're to the right: gradient builds toward you
             z:SetGradient("HORIZONTAL", z._faint, z._strong)
         else
@@ -758,15 +1047,23 @@ function Bar:Update()
     -- small and dimmed below the line; hovering its roster row lights it up.
     local nr = 0
     if st.roster then
-        for _, entry in ipairs(st.roster) do
+        for idx, entry in ipairs(st.roster) do
             local run = entry.run
             if run ~= ref.run and run.snapshots then
                 nr = nr + 1
-                local f = Runner(nr)
+                local f = Runner(nr, idx)
                 f:ClearAllPoints()
+                -- Smoothing is keyed to the ghost, not the slot: a roster reorder
+                -- (e.g. after a Switch) must not slide one ghost's icon from another
+                -- ghost's old position.
+                if f._smKey ~= run then f._smKey, f._sm = run, nil end
                 local rCourse = ease(f._sm, M.CourseAt(run, st.elapsed, nBosses))
                 f._sm = rCourse
-                f:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(rCourse), -3)
+                -- Under-track lanes (DESIGN follow-up): each runner keeps its own
+                -- vertical lane below the track (same order as the Roster Panel), so
+                -- runners at similar course positions stagger instead of stacking
+                -- into one blob. Lane 1 hugs the track; ~5 px per lane down.
+                f:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(rCourse), -3 - (nr - 1) * 5)
                 ApplyRunnerIcon(f.tex, run)
                 local lit = Bar._previewRun == run
                 f:SetAlpha(lit and 1 or (pinned(rCourse) ~= 0 and 0.3 or 0.55))
@@ -780,10 +1077,12 @@ function Bar:Update()
     end
     for i = nr + 1, #frame.runners do frame.runners[i]:Hide() end
 
-    local ghostPctNow = ref.live and (ref.nowPct or 0) or M.SampleAt(ref.run.snapshots, st.elapsed)
     local cd = st.pct - ghostPctNow
     local cc = (cd >= 0) and good or bad
-    frame.subDelta:SetFormattedText("%s%.1f%%", cd >= 0 and "+" or "", cd)
+    -- The Count Gap: fraction-space diff, rendered in the chosen readout ("+14" in
+    -- count mode — converted into YOUR total's units, so cross-total ghosts stay
+    -- honest; "+3.4%" in percent mode). Verdict color keys off the sign either way.
+    frame.subDelta:SetText(M.FormatForcesDelta(cd, st.total, countMode))
     frame.subDelta:SetTextColor(cc[1], cc[2], cc[3])
 
     frame.refLabel:SetText("vs " .. (ref.label or "?"))
@@ -792,39 +1091,89 @@ function Bar:Update()
     -- side uses the stateful tracker (boss criteria + thresholds — APL's model); the
     -- forces inference is only the test-mode/fallback path. The ghost side stays
     -- forces-inferred (a recording has no live criteria).
+    -- Route mismatch, hash-based (names lie — dossier §4): the Raced Ghost ran a
+    -- DIFFERENT route than your selected one, so its pull token is a projection
+    -- onto YOUR yardstick. Footnote asterisk on the token; the ghost tooltip
+    -- explains. Needs both hashes (your capture + a post-pipeline ghost).
+    local routeMismatch = (st.route and st.route.hash and ref.run and ref.run.routeHash
+        and ref.run.routeHash ~= st.route.hash) or false
+
     local yourPull = st.trackerPull
-        or (st.route and st.total > 0 and M.InferPull(st.raw, st.route.cum)) or nil
+        or (st.route and st.total > 0 and M.InferPull(st.raw, st.route.cumulativeForces)) or nil
     if yourPull then
-        local ghostRaw = ghostPctNow / 100 * st.total
-        local ghostPull = M.InferPull(ghostRaw, st.route.cum) or yourPull
-        local pc = (yourPull >= ghostPull) and good or bad
-        frame.pullText:SetFormattedText("pull %d · ghost %d", yourPull, ghostPull)
-        frame.pullText:SetTextColor(pc[1], pc[2], pc[3])
+        -- Ghost count mapped into the LIVE dungeon's units (the route's cumulative
+        -- forces are live units): same total = the exact integer — the old
+        -- pct-reconstruction boundary hazard (111.9999 vs 112) is gone by design.
+        local ghostRaw = (st.total > 0 and gTotal ~= st.total)
+            and (ghostCountNow / gTotal * st.total) or ghostCountNow
+        local ghostPull = M.InferPull(ghostRaw, st.route.cumulativeForces) or yourPull
+        -- Copy (Fredrik 2026-07-20): the Route's name leads (ellipsized in Lua — the
+        -- numbers must never be what gets cut), body stays neutral; ONLY the two pull
+        -- tokens carry a verdict — leader green, trailer red, tied = all neutral (a
+        -- whole sentence flipping color read as an alarm, not a status).
+        local you = string.format("Pull #%d", yourPull)
+        local gho = string.format("Ghost #%d", ghostPull)
+        if yourPull > ghostPull then
+            you, gho = GREEN_HEX .. you .. "|r", RED_HEX .. gho .. "|r"
+        elseif ghostPull > yourPull then
+            you, gho = RED_HEX .. you .. "|r", GREEN_HEX .. gho .. "|r"
+        end
+        -- Route metadata (Fredrik 2026-07-20: "use the full meta data"): the name is
+        -- stripped of any embedded color codes BEFORE the byte-based ellipsis, then
+        -- MDT's createdBy renders as the class-colored creator — same look as MDT's
+        -- own dropdown (classFile was resolved at capture, so this works without MDT).
+        local prefix = ""
+        local name = st.route and st.route.name
+        if name then
+            prefix = M.Ellipsize(M.StripColors(name), 24)
+            local cb = st.route.createdBy
+            if cb and cb.name then
+                local col = cb.classFile and _G.RAID_CLASS_COLORS and _G.RAID_CLASS_COLORS[cb.classFile]
+                prefix = prefix .. " by " .. ((col and col.colorStr)
+                    and ("|c" .. col.colorStr .. cb.name .. "|r") or cb.name)
+            end
+            prefix = prefix .. " · "
+        end
+        if routeMismatch then gho = gho .. GRAY_HEX .. "*|r" end
+        frame.pullText:SetText(prefix .. you .. " vs " .. gho)
+        frame.pullText:SetTextColor(Style.TEXT[1], Style.TEXT[2], Style.TEXT[3])
         frame.pullText:Show()
     else
         frame.pullText:Hide()
     end
 
-    local ghostBossesNow = 0
-    for i = 1, nKills do
-        if kills[i] <= st.elapsed then ghostBossesNow = ghostBossesNow + 1 end
-    end
     frame.ghostHover.tip = {
         ref.label or "Ghost",
-        string.format("Now at %s: %.1f%% count · %d/%d bosses",
-            M.FormatClock(st.elapsed), ghostPctNow, ghostBossesNow, nKills),
+        string.format("Now at %s: %s count · %d/%d bosses",
+            M.FormatClock(st.elapsed),
+            M.FormatForcesLevel(ghostCountNow, gTotal, countMode, 1), ghostBossesNow, nKills),
     }
     if ref.run and ref.run.routeName then
-        table.insert(frame.ghostHover.tip, "Route: " .. ref.run.routeName)
+        local line = "Route: " .. ref.run.routeName
+        local rd = ref.run.routeHash and KG.Ghosts:RouteForHash(ref.run.routeHash)
+        local cb = rd and rd.createdBy
+        if cb and cb.name then
+            line = line .. " (by " .. cb.name .. (cb.realm and ("-" .. cb.realm) or "") .. ")"
+        end
+        table.insert(frame.ghostHover.tip, line)
+        if routeMismatch then
+            table.insert(frame.ghostHover.tip,
+                "Different route than your MDT pick — its pull # (*) projects onto yours")
+        end
+        if rd and rd.pulls and _G.MDT then
+            table.insert(frame.ghostHover.tip, "Click: load this route into MDT")
+        end
     end
     if ref.run and ref.run.importedFrom then
         table.insert(frame.ghostHover.tip, "From: " .. ref.run.importedFrom)
     end
     frame.playerHover.tip = {
         "You",
-        string.format("%s · %.1f%% count · %d boss%s dead", M.FormatClock(st.elapsed),
-            st.pct, st.bosses, st.bosses == 1 and "" or "es"),
-        M.FormatDelta(delta) .. " vs ghost",
+        string.format("%s · %s count · %d boss%s dead", M.FormatClock(st.elapsed),
+            M.FormatForcesLevel(st.raw, st.total, countMode, 1),
+            st.bosses, st.bosses == 1 and "" or "es"),
+        gapArmed and (M.FormatDelta(delta) .. " vs ghost")
+            or "Gap arms when both sides have count",
     }
     if (st.deathCount or 0) > 0 then
         local lost = st.deathTimeLost and st.deathTimeLost > 0
@@ -832,6 +1181,9 @@ function Bar:Update()
         table.insert(frame.playerHover.tip, string.format("Deaths: %d%s", st.deathCount, lost))
     end
     frame:Show()
+    if swAge and swAge < 1.5 then
+        KG.Splits:Refresh() -- switch row-glow animates smoother than the 0.5 s ticker
+    end
 end
 
 --- Dock below the EllesmereUI Mythic+ Timer standalone frame when attach mode is on and
@@ -902,6 +1254,7 @@ function Bar:ShowSummary(s)
     for i = 1, #frame.runners do frame.runners[i]:Hide() end
     for i = 1, 3 do frame.paceCars[i]:Hide() end
     if frame.walkAnim:IsPlaying() then frame.walkAnim:Stop() end -- parked on the podium
+    if frame.dazedAnim:IsPlaying() then frame.dazedAnim:Stop() end
     frame._kb, frame._kbPot, frame._lastDeathCount, frame._lastTimeLost = nil, nil, nil, nil -- no knockback residue in the photo
 
     -- The finish photo (full-road view, no camera).
@@ -923,7 +1276,7 @@ function Bar:ShowSummary(s)
         frame.ghostCursor:SetPoint("LEFT", frame.track, "LEFT", gx - 1, 0)
         frame.ghostHover:ClearAllPoints()
         frame.ghostHover:SetPoint("TOP", frame.track, "BOTTOMLEFT", gx, -1)
-        ApplyGhostIcon(frame.ghostIcon, frame.ghostRing, ref)
+        ApplyGhostIcon(frame.ghostIcon, ref)
 
         local won = (s.diff or 0) >= 0
         local c = won and Style.GREEN or Style.RED
@@ -963,10 +1316,4 @@ function Bar:Refresh()
     else
         frame:Hide()
     end
-end
-
-function Bar:ResetPosition()
-    KG.db.pos = nil
-    Bar:InvalidatePosition()
-    Bar:Refresh()
 end

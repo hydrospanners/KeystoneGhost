@@ -2,15 +2,19 @@
 ## Title: Keystone Ghost
 ## Notes: Race a ghost of your best Mythic+ runs — at-a-glance time and count pace.
 ## Author: Hydrospanners
-## Version: 0.3.0
+## Version: 0.7.0
 ## Category: Dungeons & Raids
 ## IconTexture: Interface\Icons\INV_Misc_PocketWatch_01
 ## SavedVariables: KeystoneGhostDB
 ## OptionalDeps: EllesmereUI, EllesmereUIMythicTimer, MythicDungeonTools, RaiderIO
 
 # Bundled libs (see each folder's license): LibStub + LibSerialize + LibDeflate power the
-# export/import strings; LibEditMode (namespaced build) powers Edit Mode integration.
+# export/import strings; LibEditMode (namespaced build) powers Edit Mode integration;
+# CallbackHandler + LibDataBroker + LibDBIcon power the minimap button (Ghost Library).
 Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
 Libs\LibSerialize\LibSerialize.lua
 Libs\LibDeflate\LibDeflate.lua
 Libs\LibEditMode\namespaced.lua
@@ -28,6 +32,7 @@ Libs\LibEditMode\widgets\colorpicker.lua
 
 Init.lua
 GhostMath.lua
+Overtake.lua
 Codec.lua
 Scenario.lua
 Route.lua
@@ -38,4 +43,7 @@ Recorder.lua
 Bar.lua
 Splits.lua
 EditMode.lua
+Options.lua
+Library.lua
+Comm.lua
 Core.lua

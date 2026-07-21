@@ -1,8 +1,8 @@
 -- Blizzard Edit Mode integration via bundled LibEditMode (namespaced build — no LibStub).
 --
 -- The bar registers as an Edit Mode system: drag to reposition, click for a settings
--- dialog (Enabled, Dock under EllesmereUI timer, Scale, Walking bounce, Extra pace
--- cars +3/+2, Boss lap splits). While in Edit Mode
+-- dialog (Enabled, Dock under EllesmereUI timer, Scale, Background opacity, Walking
+-- bounce, Extra pace cars +3/+2, Boss lap splits). While in Edit Mode
 -- the bar previews the synthetic test race so there is something to see and place.
 -- Dragging a docked bar is interpreted as "I want it free": the drop position is saved
 -- and attach mode turns off; re-docking is one checkbox.
@@ -68,6 +68,20 @@ function EM:Setup()
             end,
         },
         {
+            kind = LEM.SettingType.Slider,
+            name = "Background opacity",
+            default = 1,
+            minValue = 0,
+            maxValue = 1,
+            valueStep = 0.05,
+            formatter = function(v) return string.format("%.0f%%", v * 100) end,
+            get = function() return KG.db.bgAlpha == nil and 1 or KG.db.bgAlpha end,
+            set = function(_, value)
+                KG.db.bgAlpha = value
+                KG.Bar:Refresh(); KG.Splits:Refresh()
+            end,
+        },
+        {
             kind = LEM.SettingType.Checkbox,
             name = "Walking bounce",
             desc = "Your icon does a little walk-cycle hop while moving — and stands still while you fight a boss.",
@@ -99,6 +113,9 @@ function EM:Setup()
                 KG.Splits:Refresh()
             end,
         },
+        -- Behavioral options (route-share toggles etc.) live in Options.lua —
+        -- the Blizzard AddOns panel. Edit Mode is visual/layout ONLY
+        -- (architecture rule, Fredrik 2026-07-20).
     })
 
     LEM:RegisterCallback("enter", function()
