@@ -1,0 +1,32 @@
+package-as: KeystoneGhost
+
+# Libs/ (LibStub, CallbackHandler, LibDataBroker, LibDBIcon, LibSerialize,
+# LibDeflate, LibEditMode) is bundled deliberately — no nolib variant.
+enable-nolib-creation: no
+
+# Use the hand-written changelog as the CurseForge file changelog instead of
+# the packager's auto-generated git log (staging commits are just
+# "release: vX.Y.Z", which tells users nothing). The ignore list below still
+# keeps CHANGELOG.md out of the addon zip itself.
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
+# Keep repo/meta files out of the distributed addon zip. WoW only needs the
+# .lua/.toc/.tga; everything below is for GitHub/CurseForge, not the game.
+# (docs/, tests/, DESIGN.md, AGENTS.md never reach the staging repo at all —
+# the publish dev-file filter strips them — but they are listed anyway as a
+# second fence.)
+ignore:
+  - .github
+  - .pkgmeta
+  - .gitignore
+  - .publish-state.json
+  - AGENTS.md
+  - DESIGN.md
+  - docs
+  - tests
+  - README.md
+  - CHANGELOG.md
+  - logo.png
+  - logo-icon.png

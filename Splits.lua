@@ -184,23 +184,24 @@ local function Build()
 
     -- Sortable headers (Fredrik 2026-07-21): click time/now to sort the rows
     -- (and the track lanes with them); click ghost to restore the priority
-    -- order. Small buttons over the labels; the active one wears accent + ^/v.
-    local function HeaderButton(fs, col, tipText)
+    -- order. NO tooltips ("too cluttering", same day) — the only hover cue is
+    -- Ellesmere's own sort-header recipe (BlizzardSkin SortHeaderBar): a solid
+    -- white HIGHLIGHT-layer wash at 10%, drawn by the engine only while
+    -- hovered. The active header wears accent + ^/v (state, not hover).
+    local function HeaderButton(fs, col)
         local b = CreateFrame("Button", nil, frame.header)
         b:SetPoint("LEFT", frame.header, "LEFT", fs:GetPoint(1) and select(4, fs:GetPoint(1)) or 0, 0)
         b:SetSize(fs:GetWidth(), HEADER_H)
         b:SetScript("OnClick", function() Splits.SetSort(col) end)
-        b:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
-            GameTooltip:SetText(tipText, 0.9, 0.9, 0.9)
-            GameTooltip:Show()
-        end)
-        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        local hov = b:CreateTexture(nil, "HIGHLIGHT")
+        hov:SetTexture("Interface\\Buttons\\WHITE8x8")
+        hov:SetVertexColor(1, 1, 1, 0.1)
+        hov:SetAllPoints(b)
         return b
     end
-    HeaderButton(frame.hTag, nil, "Click: restore the normal roster order")
-    HeaderButton(frame.hDur, "time", "Sort by ghost time (click again to flip)")
-    HeaderButton(frame.hNow, "now", "Sort by current gap — the order freezes as of this click")
+    HeaderButton(frame.hTag, nil)
+    HeaderButton(frame.hDur, "time")
+    HeaderButton(frame.hNow, "now")
 
     frame.rows = {}
     for i = 1, MAX_ROWS do

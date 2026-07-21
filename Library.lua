@@ -24,7 +24,7 @@ local TITLE_H, HEADER_H, GROUP_H, ROW_H, BOTTOM_H = 30, 18, 22, 24, 34
 -- Column x-offsets inside a row. Reaction round 2026-07-21 (Fredrik): the share
 -- button sits FAR LEFT, delete stays FAR RIGHT — the destructive action lives
 -- alone at the opposite edge from everything you'd click routinely.
-local COL = { SHARE = 0, PIN = 22, LVL = 44, TIER = 80, TIME = 134, DATE = 186, ROUTE = 232, OWNER = 404, DEL = 552 }
+local COL = { SHARE = 0, LVL = 26, TIER = 62, TIME = 116, DATE = 168, ROUTE = 214, OWNER = 400, DEL = 552 }
 local OWNER_W, ROUTE_W = COL.DEL - COL.OWNER - 6, COL.OWNER - COL.ROUTE - 8
 
 local GOLD = { 1, 0.82, 0.15 } -- the pin gold (Splits' lock tint)
@@ -140,6 +140,13 @@ local function RowTip(row)
         local cluster = ClusterLine(run)
         if cluster then tip[#tip + 1] = cluster end
     end
+    if row.pinned then
+        tip[#tip + 1] = "Click: unpin (back to the automatic pick)"
+    else
+        tip[#tip + 1] = string.format("Click: pin — races when you run %s +%d%s",
+            row.groupName, row.level,
+            row.tier == 0 and " (a Depleted run races only by this pin)" or "")
+    end
     return tip
 end
 
@@ -211,37 +218,6 @@ local function AcquireRow(i)
         fs:SetWordWrap(false)
         return fs
     end
-
-    row.pin = CreateFrame("Button", nil, row)
-    row.pin:SetSize(16, 16)
-    row.pin:SetPoint("LEFT", row, "LEFT", COL.PIN, 0)
-    row.pin.tex = row.pin:CreateTexture(nil, "ARTWORK")
-    row.pin.tex:SetAllPoints()
-    -- The Pin wears an actual map-pin (Fredrik 2026-07-21 — the lock read wrong).
-    -- Atlas verified in use by installed addons; desaturated so the vertex color
-    -- alone speaks: grey = pinnable, gold = pinned (the roster wears the same).
-    row.pin.tex:SetAtlas("Waypoint-MapPin-Tracked")
-    row.pin.tex:SetDesaturated(true)
-    row.pin:SetScript("OnClick", function(self)
-        local r = self.row
-        KG.Ghosts:TogglePin(r.charKey, r.mapID, r.level, r.tier)
-        Library:Refresh()
-    end)
-    row.pin:SetScript("OnEnter", function(self)
-        local r = self.row
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        if r.pinned then
-            GameTooltip:SetText(string.format("Pinned — races when you run %s +%d.", r.groupName, r.level))
-            GameTooltip:AddLine("Click to unpin (back to the automatic pick).", 0.9, 0.9, 0.9)
-        else
-            GameTooltip:SetText(string.format("Race this next key — pin for %s +%d.", r.groupName, r.level))
-        end
-        if r.tier == 0 then
-            GameTooltip:AddLine("A Depleted run races only by this explicit pin — the automatic pick never chooses one.", 0.55, 0.55, 0.55, true)
-        end
-        GameTooltip:Show()
-    end)
-    row.pin:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     row.lvl = Col(COL.LVL, COL.TIER - COL.LVL - 2)
     row.tier = Col(COL.TIER, COL.TIME - COL.TIER - 2, 11)
@@ -319,21 +295,33 @@ local function AcquireRow(i)
             { charKey = r.charKey, mapID = r.mapID, level = r.level, tier = r.tier })
     end)
 
-    -- Shift-click with the chat editbox open inserts the chat share link — the
-    -- same gesture as the Roster Panel rows; one idiom everywhere (3b).
+    -- Click ANYWHERE on the row = pin/unpin for its (dungeon, level) — the
+    -- roster's own row-click language (Fredrik 2026-07-21; the pin glyph
+    -- column retired the same day). The share/delete/route buttons sit above
+    -- the row and keep their own clicks. Shift-click still inserts the chat
+    -- share link (same gesture as the Roster Panel rows).
     row:SetScript("OnMouseUp", function(self, button)
         local r = self.row
-        if button == "LeftButton" and IsShiftKeyDown() and r and KG.Comm then
+        if button ~= "LeftButton" or not r then return end
+        if IsShiftKeyDown() and KG.Comm then
             local pretty = string.format("%s +%d (%s)", r.groupName, r.level,
                 M.FormatClock(r.run.durationSec or 0))
             KG.Comm.InsertShareLink(r.charKey, r.mapID, r.level, r.tier, pretty)
+            return
         end
+        KG.Ghosts:TogglePin(r.charKey, r.mapID, r.level, r.tier)
+        Library:Refresh()
     end)
 
     -- Row hover: the context tooltip (the payload-expansion payoff — spec, party,
     -- provenance, Share-Tag cluster) + a faint wash so the eye keeps its line.
     row:SetScript("OnEnter", function(self)
-        self.bg:SetVertexColor(1, 1, 1, (self.row and self.row.pinned) and 0.08 or 0.03)
+        if self.row and self.row.pinned then
+            local pr, pg, pb = Style.GetAccent()
+            self.bg:SetVertexColor(pr, pg, pb, 0.2) -- pinned: the accent wash brightens
+        else
+            self.bg:SetVertexColor(1, 1, 1, 0.03)
+        end
         self.bg:Show()
         local tip = RowTip(self.row)
         if GameTooltip_SetDefaultAnchor then
@@ -351,7 +339,8 @@ local function AcquireRow(i)
     end)
     row:SetScript("OnLeave", function(self)
         if self.row and self.row.pinned then
-            self.bg:SetVertexColor(1, 1, 1, 0.05) -- back to the resting pinned wash
+            local pr, pg, pb = Style.GetAccent()
+            self.bg:SetVertexColor(pr, pg, pb, 0.14) -- back to the resting accent wash
         else
             self.bg:Hide()
         end
@@ -508,7 +497,7 @@ function Library:Refresh()
             local row = AcquireRow(usedR)
             r.groupName = g.name
             row.row = r
-            row.pin.row, row.route.row, row.share.row, row.del.row = r, r, r, r
+            row.route.row, row.share.row, row.del.row = r, r, r
             row:SetPoint("TOPLEFT", 6, -y)
             row:SetPoint("TOPRIGHT", -2, -y)
 
@@ -534,16 +523,15 @@ function Library:Refresh()
             -- Depleted: still never auto-raced/rostered/exported — the share button
             -- stays hidden — but PINNING is allowed (Fredrik 2026-07-21): an
             -- explicit pin is the player's deliberate "race my depleted attempt".
-            row.pin:Show()
+            -- Pinned = the Roster Panel's raced-row language (his order, same
+            -- day — the pin glyph column retired): accent edge bar + accent wash.
             if r.pinned then
-                row.pin.tex:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
-                row.pin:SetAlpha(1)
+                local pr, pg, pb = Style.GetAccent()
+                row.edge:SetVertexColor(pr, pg, pb, 0.95)
                 row.edge:Show()
-                row.bg:SetVertexColor(1, 1, 1, 0.05)
+                row.bg:SetVertexColor(pr, pg, pb, 0.14)
                 row.bg:Show()
             else
-                row.pin.tex:SetVertexColor(0.4, 0.4, 0.45)
-                row.pin:SetAlpha(0.8)
                 row.edge:Hide()
                 row.bg:Hide()
             end
