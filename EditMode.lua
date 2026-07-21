@@ -65,6 +65,7 @@ function EM:Setup()
             set = function(_, value)
                 KG.db.scale = value
                 KG.Bar.ApplyScale()
+                KG.Library:ApplyScale() -- the Library follows the same slider (2026-07-21)
             end,
         },
         {

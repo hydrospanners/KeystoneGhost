@@ -14,6 +14,7 @@ loader:SetScript("OnEvent", function(self, event, addonName)
         self:UnregisterEvent("ADDON_LOADED")
     elseif event == "PLAYER_LOGIN" then
         self:UnregisterEvent("PLAYER_LOGIN")
+        KG.Style.ApplyColorVision(KG.db.colorVision) -- verdict palette before first draw
         KG.Start()
         KG.EditMode:Setup()
         KG.Options:Setup()
