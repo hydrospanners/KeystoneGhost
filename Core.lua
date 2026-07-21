@@ -38,9 +38,16 @@ function KG.Start()
     ev:RegisterUnitEvent("UNIT_PORTRAIT_UPDATE", "player")
     ev:RegisterEvent("ENCOUNTER_START")
     ev:RegisterEvent("ENCOUNTER_END")
+    ev:RegisterEvent("SCENARIO_CRITERIA_UPDATE") -- change-driven recording: the count moved
+    ev:RegisterEvent("SCENARIO_POI_UPDATE") -- companion scenario signal, same capture
     ev:RegisterEvent("INSPECT_READY") -- party spec backfill after a saved run
     ev:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4, arg5)
-        if event == "INSPECT_READY" then
+        if event == "SCENARIO_CRITERIA_UPDATE" or event == "SCENARIO_POI_UPDATE" then
+            -- The event's frame is the node's timestamp. No redraw here: these
+            -- burst during AoE, and the bar's own 10 Hz OnUpdate carries display.
+            KG.Recorder:OnScenarioUpdate()
+            return
+        elseif event == "INSPECT_READY" then
             KG.Recorder:OnInspectReady(arg1)
             return
         elseif event == "ENCOUNTER_START" then

@@ -191,11 +191,11 @@ function G:UpdateRioMirror(ref, t)
     end
     ref.nowCount = count
     ref.nowBosses = #run.bossKills
-    local snaps = run.snapshots
-    local last = snaps[#snaps]
-    if not last or t - last[1] >= 2 then
-        snaps[#snaps + 1] = { t, count, ref.nowBosses }
-    end
+    -- Change-only mirror nodes (the 2026-07-21 event-log cutover): the replay's
+    -- count is step-shaped by construction, so clock-cadence appends recorded
+    -- flats and smeared each step up to 2 s. AppendStepNode no-ops between
+    -- changes and lands steps at the tick that watched them (≤ 0.5 s).
+    M.AppendStepNode(run.snapshots, t, count, ref.nowBosses)
 end
 
 --- Display name for a ghost run's i-th boss kill — the ID dictionary at work
