@@ -246,9 +246,14 @@ local function TestState()
     -- Doubles land as TWO ticks (0.8 sim-s apart) so the second death arrives while
     -- the first knock is animating — that's the Death Pot path, not just a big knock.
     local deaths, dT, dDouble = 0, 45, false
+    local simDeaths = {} -- {t, running count} — feeds the tombstone Death Markers
     while dT <= elapsed do
         deaths = deaths + 1
-        if dDouble and dT + 0.8 <= elapsed then deaths = deaths + 1 end
+        simDeaths[#simDeaths + 1] = { dT, deaths }
+        if dDouble and dT + 0.8 <= elapsed then
+            deaths = deaths + 1
+            simDeaths[#simDeaths + 1] = { dT + 0.8, deaths }
+        end
         dDouble = not dDouble
         dT = dT + 30
     end
@@ -263,7 +268,7 @@ local function TestState()
             liveNames = test.run.bossNames, liveCounts = test.run.bossCounts,
             raw = raw, total = total, route = test.route,
             liveRun = test.simRun, -- the sim player's own curve: LiveDelta's ahead-branch input
-            deathCount = deaths, deathTimeLost = deaths * 15,
+            deathCount = deaths, deathTimeLost = deaths * 15, deaths = simDeaths,
             ref = test.rioRef,
             roster = { { run = test.rioRef.run, tag = "RIO" } },
             lastSwitch = nil,
@@ -315,7 +320,7 @@ local function TestState()
         elapsed = elapsed, pct = pct, bosses = bosses, liveKills = liveKills, par = test.par,
         liveNames = test.run.bossNames, liveCounts = test.run.bossCounts,
         raw = raw, total = total, route = test.route,
-        deathCount = deaths, deathTimeLost = deaths * 15,
+        deathCount = deaths, deathTimeLost = deaths * 15, deaths = simDeaths,
         ref = { kind = "test", label = label, run = raced, durationSec = raced.durationSec },
         roster = roster,
         lastSwitch = test.lastSwitch,
@@ -340,6 +345,7 @@ function Bar.GetLiveState()
         elapsed = elapsed, pct = pct, bosses = bosses, liveKills = R:GetBossKills(),
         liveNames = liveNames, liveCounts = liveCounts, seededKills = seededKills, liveIDs = liveIDs,
         liveRun = R:GetLiveRun(), raw = raw, total = total, route = route,
+        deaths = R:GetDeaths(), -- {t, running deaths} — the tombstone Death Markers
         trackerPull = R:GetTrackerPull(),
         -- Stable roster: keyed to YOUR route, never to the raced ghost — a switch
         -- moves the highlight, not the rows (Fredrik 2026-07-20).
@@ -1009,10 +1015,18 @@ function Bar:Update()
         if delta >= 0 then
             br, bg2, bb = good[1], good[2], good[3]
         else
-            -- Behind: grey → red by how close ghost-pace projection is to depleting.
+            -- Behind: red-tinted from the FIRST second behind, ramping to the
+            -- full bad color by Depletion Danger (Fredrik 2026-07-21 "increase
+            -- anger!" — the old grey→red lerp read almost grey at low severity;
+            -- now a 25% red floor + an eased ramp). Derived from Style.RED so
+            -- the color-vision setting carries into the zone too.
             local sev = M.BehindSeverity(delta, ref.durationSec, st.par)
             if sev then
-                br, bg2, bb = 0.6 + 0.32 * sev, 0.6 - 0.28 * sev, 0.6 - 0.28 * sev
+                local anger = 0.25 + 0.75 * sev ^ 0.7
+                local base = 0.55
+                br = base + (bad[1] - base) * anger
+                bg2 = base + (bad[2] - base) * anger
+                bb = base + (bad[3] - base) * anger
                 -- Angry Sweeper red (DESIGN follow-up): near-certain depletion is the
                 -- SWEEPER's territory, and its red must read angrier than any other
                 -- red on the track — hotter, more saturated, and slowly pulsing.
@@ -1045,37 +1059,72 @@ function Bar:Update()
 
     -- Roster runners: every other roster ghost races visibly at its own road position,
     -- small and dimmed below the line; hovering its roster row lights it up.
+    -- LANES = the Roster Panel's row order, one for one (Fredrik 2026-07-21: the
+    -- Y order looked random — it was counting non-raced runners, so a mid-list
+    -- raced ghost shifted everyone below it). The raced row's lane stays empty
+    -- (its ghost rides the badge cursor above the line); a header sort in the
+    -- panel re-lanes the runners identically. Pairing colors stay keyed to the
+    -- ghost's BASE roster position — a sort moves lanes, never recolors.
     local nr = 0
-    if st.roster then
-        for idx, entry in ipairs(st.roster) do
-            local run = entry.run
-            if run ~= ref.run and run.snapshots then
-                nr = nr + 1
-                local f = Runner(nr, idx)
-                f:ClearAllPoints()
-                -- Smoothing is keyed to the ghost, not the slot: a roster reorder
-                -- (e.g. after a Switch) must not slide one ghost's icon from another
-                -- ghost's old position.
-                if f._smKey ~= run then f._smKey, f._sm = run, nil end
-                local rCourse = ease(f._sm, M.CourseAt(run, st.elapsed, nBosses))
-                f._sm = rCourse
-                -- Under-track lanes (DESIGN follow-up): each runner keeps its own
-                -- vertical lane below the track (same order as the Roster Panel), so
-                -- runners at similar course positions stagger instead of stacking
-                -- into one blob. Lane 1 hugs the track; ~5 px per lane down.
-                f:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(rCourse), -3 - (nr - 1) * 5)
-                ApplyRunnerIcon(f.tex, run)
-                local lit = Bar._previewRun == run
-                f:SetAlpha(lit and 1 or (pinned(rCourse) ~= 0 and 0.3 or 0.55))
-                f.tip = {
-                    (entry.tag or M.TierLabel(run.chests)) .. " ghost — " .. M.FormatClock(run.durationSec or 0),
-                    run.importedFrom and ("From: " .. run.importedFrom) or "One of your runs",
-                }
-                f:Show()
-            end
+    local displayRows = KG.Splits and KG.Splits.BuildDisplayRows and KG.Splits.BuildDisplayRows(st) or {}
+    for laneIdx, entry in ipairs(displayRows) do
+        local run = entry.run
+        if run ~= ref.run and run.snapshots then
+            nr = nr + 1
+            local f = Runner(nr, entry.colorIdx or laneIdx)
+            f:ClearAllPoints()
+            -- Smoothing is keyed to the ghost, not the slot: a roster reorder
+            -- (e.g. after a Switch) must not slide one ghost's icon from another
+            -- ghost's old position.
+            if f._smKey ~= run then f._smKey, f._sm = run, nil end
+            local rCourse = ease(f._sm, M.CourseAt(run, st.elapsed, nBosses))
+            f._sm = rCourse
+            f:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(rCourse), -3 - (laneIdx - 1) * 5)
+            ApplyRunnerIcon(f.tex, run)
+            local lit = Bar._previewRun == run
+            f:SetAlpha(lit and 1 or (pinned(rCourse) ~= 0 and 0.3 or 0.55))
+            f.tip = {
+                (entry.tag or M.TierLabel(run.chests)) .. " ghost — " .. M.FormatClock(run.durationSec or 0),
+                run.importedFrom and ("From: " .. run.importedFrom) or "One of your runs",
+            }
+            f:Show()
         end
     end
     for i = nr + 1, #frame.runners do frame.runners[i]:Hide() end
+
+    -- Death markers (Fredrik 2026-07-21, REVERSING the 2026-07-19 "no death
+    -- marks" call — his order: "bring back the death markers with a tombstone
+    -- icon"): one small tombstone under the track at the course position where
+    -- each of the group's deaths happened. Atlas poi-graveyard-neutral — the
+    -- same glyph RaiderIO's own MDI frame uses for death counts.
+    frame.deathMarks = frame.deathMarks or {}
+    local nd = 0
+    if st.deaths then
+        for i = 1, #st.deaths do
+            local d = st.deaths[i]
+            local dt = d and d[1]
+            if dt and dt <= st.elapsed then
+                local course = M.CourseAt(st.liveRun or { snapshots = {} }, dt, nBosses)
+                if pinned(course) == 0 then
+                    nd = nd + 1
+                    local mark = frame.deathMarks[nd]
+                    if not mark then
+                        mark = Style.Hover(frame.track, 9, 12)
+                        mark.tex = mark:CreateTexture(nil, "ARTWORK")
+                        mark.tex:SetAllPoints()
+                        mark.tex:SetAtlas("poi-graveyard-neutral")
+                        mark.tex:SetAlpha(0.75)
+                        frame.deathMarks[nd] = mark
+                    end
+                    mark:ClearAllPoints()
+                    mark:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(course), -1)
+                    mark.tip = { string.format("Death #%d — %s", i, M.FormatClock(dt)) }
+                    mark:Show()
+                end
+            end
+        end
+    end
+    for i = nd + 1, #frame.deathMarks do frame.deathMarks[i]:Hide() end
 
     local cd = st.pct - ghostPctNow
     local cc = (cd >= 0) and good or bad
@@ -1252,6 +1301,9 @@ function Bar:ShowSummary(s)
     frame.subDelta:SetTextColor(aR, aG, aB)
     frame.pullText:Hide()
     for i = 1, #frame.runners do frame.runners[i]:Hide() end
+    if frame.deathMarks then
+        for i = 1, #frame.deathMarks do frame.deathMarks[i]:Hide() end
+    end
     for i = 1, 3 do frame.paceCars[i]:Hide() end
     if frame.walkAnim:IsPlaying() then frame.walkAnim:Stop() end -- parked on the podium
     if frame.dazedAnim:IsPlaying() then frame.dazedAnim:Stop() end

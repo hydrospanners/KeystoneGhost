@@ -17,7 +17,8 @@ local Splits = {}
 KG.Splits = Splits
 
 local MAX_ROWS = 4
-local MAX_LAPS = 4
+local MAX_LAPS = 4     -- column frames built (window shows at most LAP_WINDOW of them)
+local LAP_WINDOW = 3   -- visible boss columns (Fredrik 2026-07-21: window slides on kills)
 local PAD = 12
 local ROW_H = 14
 local HEADER_H = 11
@@ -26,11 +27,125 @@ local frame
 -- Column x-offsets within a row (icon occupies 0..14).
 local COL_TAG, COL_DUR, COL_NOW, COL_LAP0, LAP_W = 18, 70, 106, 146, 41
 
-local GREEN, RED, GRAY = "|cff4dcc4d", "|cffe65959", "|cff8c8c8c"
+local GRAY = "|cff8c8c8c"
 
+--- Verdict-colored delta (palette-aware — color vision setting swaps the pair).
 local function ColorDelta(sec, goodWhenPositive)
     local good = goodWhenPositive and sec >= 0 or (not goodWhenPositive and sec <= 0)
-    return (good and GREEN or RED) .. M.FormatDelta(sec) .. "|r"
+    return "|cff" .. (good and Style.GoodHex() or Style.BadHex()) .. M.FormatDelta(sec) .. "|r"
+end
+
+--- Neutral delta for NON-ACTIVE rows (Fredrik 2026-07-21: "too many colors
+--- that draw attention" — only the raced row speaks verdict red/green).
+local function PlainDelta(sec)
+    return M.FormatDelta(sec)
+end
+
+-- ── Row order: ONE source for the Roster Panel AND the track's runner lanes ──
+--
+-- Base order = the stable priority chain (RIO lead while raced → roster →
+-- fallback raced row). Fredrik 2026-07-21: clicking the time/now headers
+-- re-sorts DELIBERATELY (the 2026-07-20 stability rule bans the SYSTEM
+-- reordering rows, not the player); the track runners' vertical lanes follow
+-- this same order, so a sort re-lanes the icons too. Pairing colors stay
+-- keyed to the ghost's BASE roster position — sorting moves rows, never
+-- recolors a ghost. "now" sorts on a SNAPSHOT taken at click time (a live
+-- re-sort every tick would make the rows dance); "time" is static data.
+local nowRankCache -- { roster = <st.roster ref>, desc = bool, bump = n, rank = {[run]=i} }
+local sortBump = 0
+
+local function NowValue(run, st)
+    return M.GhostTimeFor(run, st.raw, st.bosses, st.total) - st.elapsed
+end
+
+local function EnsureNowRanks(rows, st, desc)
+    local c = nowRankCache
+    if c and c.roster == st.roster and c.desc == desc and c.bump == sortBump then return c.rank end
+    local order = {}
+    for i, e in ipairs(rows) do order[#order + 1] = { run = e.run, v = NowValue(e.run, st), i = i } end
+    table.sort(order, function(a, b)
+        if a.v ~= b.v then
+            if desc then return a.v > b.v end
+            return a.v < b.v
+        end
+        return a.i < b.i
+    end)
+    local rank = {}
+    for i, o in ipairs(order) do rank[o.run] = i end
+    nowRankCache = { roster = st.roster, desc = desc, bump = sortBump, rank = rank }
+    return rank
+end
+
+--- The display row list (shared with Bar.lua's runner lanes). Each entry:
+--- { run, tag, colorIdx (base pairing position), live (RIO lead) }.
+function Splits.BuildDisplayRows(st)
+    local ref = st.ref
+    local racedRun = ref and ref.run
+    local rows = {}
+    local lead
+    if racedRun and ref.live then
+        lead = { run = racedRun, tag = "RIO", live = true }
+    end
+    for idx, entry in ipairs(st.roster or {}) do
+        rows[#rows + 1] = { run = entry.run, tag = entry.tag, colorIdx = idx }
+    end
+    if racedRun and not ref.live then
+        local present = false
+        for _, e in ipairs(rows) do
+            if e.run == racedRun then present = true break end
+        end
+        if not present then
+            rows[#rows + 1] = { run = racedRun,
+                tag = (racedRun.importedFrom and (racedRun.importedFrom:match("^([^%-]+)") or "import"))
+                    or M.TierLabel(racedRun.chests) }
+        end
+    end
+
+    local sort = KG.db.rosterSort
+    if sort and sort.col == "time" then
+        local baseIdx = {}
+        for i, e in ipairs(rows) do baseIdx[e] = i end
+        table.sort(rows, function(a, b)
+            local av, bv = a.run.durationSec or 0, b.run.durationSec or 0
+            if av ~= bv then
+                if sort.desc then return av > bv end
+                return av < bv
+            end
+            return baseIdx[a] < baseIdx[b]
+        end)
+    elseif sort and sort.col == "now" then
+        local rank = EnsureNowRanks(rows, st, sort.desc)
+        local baseIdx = {}
+        for i, e in ipairs(rows) do baseIdx[e] = i end
+        table.sort(rows, function(a, b)
+            local ar, br = rank[a.run], rank[b.run]
+            if ar and br and ar ~= br then return ar < br end
+            if ar and not br then return true end
+            if br and not ar then return false end
+            return baseIdx[a] < baseIdx[b]
+        end)
+    end
+
+    -- The live RIO ghost leads the list regardless of sort (it is the raced
+    -- reference, never a sortable roster member).
+    if lead then table.insert(rows, 1, lead) end
+    return rows
+end
+
+--- Header click: sort by col (repeat click flips direction), "ghost" resets.
+function Splits.SetSort(col)
+    local cur = KG.db.rosterSort
+    if not col then
+        KG.db.rosterSort = nil
+    elseif cur and cur.col == col then
+        KG.db.rosterSort = { col = col, desc = not cur.desc }
+    else
+        -- First click defaults: time = fastest first (asc); now = biggest lead first (desc).
+        KG.db.rosterSort = { col = col, desc = (col == "now") }
+    end
+    sortBump = sortBump + 1
+    Splits:Refresh()
+    KG.Bar:Refresh()
 end
 
 local function Col(parent, x, w, size)
@@ -66,6 +181,26 @@ local function Build()
     end
     for _, h in ipairs({ frame.hTag, frame.hDur, frame.hNow }) do h:SetAlpha(0.55) end
     for _, h in ipairs(frame.hLaps) do h:SetAlpha(0.55) end
+
+    -- Sortable headers (Fredrik 2026-07-21): click time/now to sort the rows
+    -- (and the track lanes with them); click ghost to restore the priority
+    -- order. Small buttons over the labels; the active one wears accent + ^/v.
+    local function HeaderButton(fs, col, tipText)
+        local b = CreateFrame("Button", nil, frame.header)
+        b:SetPoint("LEFT", frame.header, "LEFT", fs:GetPoint(1) and select(4, fs:GetPoint(1)) or 0, 0)
+        b:SetSize(fs:GetWidth(), HEADER_H)
+        b:SetScript("OnClick", function() Splits.SetSort(col) end)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+            GameTooltip:SetText(tipText, 0.9, 0.9, 0.9)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        return b
+    end
+    HeaderButton(frame.hTag, nil, "Click: restore the normal roster order")
+    HeaderButton(frame.hDur, "time", "Sort by ghost time (click again to flip)")
+    HeaderButton(frame.hNow, "now", "Sort by current gap — the order freezes as of this click")
 
     frame.rows = {}
     for i = 1, MAX_ROWS do
@@ -173,14 +308,39 @@ function Splits:Refresh()
     local racedRun = ref and ref.run
     local n = 0
 
-    -- Lap columns shown = most bosses any displayed ghost has (cap MAX_LAPS).
-    local nLapCols = racedRun and math.min(MAX_LAPS, #(racedRun.bossKills or {})) or 0
-    if st.roster then
-        for _, e in ipairs(st.roster) do
-            nLapCols = math.max(nLapCols, math.min(MAX_LAPS, #(e.run.bossKills or {})))
+    -- Sort indicators: the active header wears accent + a direction mark.
+    local sort = KG.db.rosterSort
+    local function HeaderText(fs, base, col)
+        if sort and sort.col == col then
+            fs:SetText("|cff" .. accentHex .. base .. (sort.desc and " v" or " ^") .. "|r")
+        else
+            fs:SetText(base)
         end
     end
-    for i = 1, MAX_LAPS do frame.hLaps[i]:SetShown(i <= nLapCols) end
+    HeaderText(frame.hDur, "time", "time")
+    HeaderText(frame.hNow, "now", "now")
+
+    -- Boss-column WINDOW (Fredrik 2026-07-21): at most LAP_WINDOW columns. The
+    -- window slides on YOUR kills — after your 2nd kill B1 leaves (kill 2 is
+    -- the reference running at 3), after the 3rd B2 leaves, etc. maxB = most
+    -- bosses any displayed ghost has.
+    local maxB = racedRun and #(racedRun.bossKills or {}) or 0
+    if st.roster then
+        for _, e in ipairs(st.roster) do
+            maxB = math.max(maxB, #(e.run.bossKills or {}))
+        end
+    end
+    local winStart = math.min(math.max(1, (st.bosses or 0) - 1), math.max(1, maxB - LAP_WINDOW + 1))
+    local nLapCols = math.min(LAP_WINDOW, maxB - winStart + 1)
+    if maxB == 0 then nLapCols = 0 end
+    for i = 1, MAX_LAPS do
+        if i <= nLapCols then
+            frame.hLaps[i]:SetText("B" .. (winStart + i - 1))
+            frame.hLaps[i]:Show()
+        else
+            frame.hLaps[i]:Hide()
+        end
+    end
 
     local aR, aG, aB = Style.GetAccent()
     local function SetRow(run, tag, isRaced, colorIdx)
@@ -206,19 +366,32 @@ function Splits:Refresh()
             armed = M.HasProgress(st.raw, st.bosses)
                 and M.HasProgress(M.SampleAt(run.snapshots or {}, st.elapsed))
         end
-        row.cNow:SetText(armed and ColorDelta(now, true) or (GRAY .. "0:00|r"))
-        -- Identity-matched laps (SCENARIOS C2): column j is this ghost's j-th kill,
-        -- paired with YOUR kill of the same encounterID; order fallback sans IDs.
-        -- Kills seeded at /reload resume have fake timestamps — never shown as laps
+        -- Verdict colors belong to the ACTIVE row alone (Fredrik 2026-07-21:
+        -- "too many colors that draw attention"); non-raced rows read neutral.
+        if armed then
+            row.cNow:SetText(isRaced and ColorDelta(now, true) or PlainDelta(now))
+        else
+            row.cNow:SetText(GRAY .. "0:00|r")
+        end
+        -- Identity-matched laps (SCENARIOS C2): the visible window's column j is
+        -- boss winStart+j-1 — this ghost's kill of that ordinal, paired with
+        -- YOUR kill of the same encounterID; order fallback sans IDs. Kills
+        -- seeded at /reload resume have fake timestamps — never shown as laps
         -- (same rule the bar's skull tooltips follow).
         local laps, lapMatch = M.LapDeltasByID(st.liveKills or {}, run.bossKills or {},
             st.liveIDs, run.bossIDs)
         for j = 1, MAX_LAPS do
             if j <= nLapCols then
+                local bi = winStart + j - 1
                 local kills = run.bossKills or {}
-                local seeded = lapMatch[j] and st.seededKills and lapMatch[j] <= st.seededKills
-                row.cLaps[j]:SetText((not seeded and laps[j]) and ColorDelta(laps[j], false)
-                    or (kills[j] and (GRAY .. "—|r") or ""))
+                local seeded = lapMatch[bi] and st.seededKills and lapMatch[bi] <= st.seededKills
+                local txt
+                if not seeded and laps[bi] then
+                    txt = isRaced and ColorDelta(laps[bi], false) or PlainDelta(laps[bi])
+                else
+                    txt = kills[bi] and (GRAY .. "—|r") or ""
+                end
+                row.cLaps[j]:SetText(txt)
                 row.cLaps[j]:Show()
             else
                 row.cLaps[j]:Hide()
@@ -249,47 +422,28 @@ function Splits:Refresh()
             KG.Bar.ApplyRefIconTo(row.icon, ref)
             row.icon:SetSize(10, 10) -- the applier sizes for the track badge; re-pin
             row.iconBorder:Hide() -- filler rows reuse this plate; the raced row wears none
-            row.icon:SetAlpha(1)
+            row:SetAlpha(1)
         else
             KG.Bar.ApplyRunnerIconTo(row.icon, run)
-            -- Pairing color keyed to the ghost's STABLE roster position — matches
-            -- its track runner, and a switch never recolors the survivors.
+            -- Pairing color keyed to the ghost's BASE roster position — matches
+            -- its track runner; neither a switch NOR a header sort recolors it.
             local c = Style.PULL_COLORS[((colorIdx or n) - 1) % #Style.PULL_COLORS + 1]
             row.iconBorder:SetVertexColor(c[1], c[2], c[3])
             row.iconBorder:Show()
-            -- NO fade in the roster (Fredrik 2026-07-20, Live Test 1): the dim
-            -- belongs to the TRACK runners — there it makes rivals easy to
-            -- dismiss mid-race; in the roster every row reads at full strength.
             row.icon:SetAlpha(1)
             row.iconBorder:SetAlpha(1)
+            -- Light whole-row fade on non-active rows (Fredrik 2026-07-21,
+            -- superseding the Live-Test-1 "no roster fade": ~15% back-seat so
+            -- the raced row owns the attention).
+            row:SetAlpha(0.85)
         end
         row:Show()
     end
 
-    -- STABLE order (Fredrik 2026-07-20, Live Test 1): the roster list never
-    -- reorders on a switch or pin — the highlight moves to the raced row in
-    -- place. The live RaiderIO ghost is not a roster member (live-only), so it
-    -- leads the list while raced; a raced ghost that somehow fell off the
-    -- roster cap still gets a row at the end rather than vanishing.
-    local rows = {}
-    if racedRun and ref.live then
-        rows[#rows + 1] = { run = racedRun, tag = "RIO" }
-    end
-    for idx, entry in ipairs(st.roster or {}) do
-        rows[#rows + 1] = { run = entry.run, tag = entry.tag, colorIdx = idx }
-    end
-    if racedRun and not ref.live then
-        local present = false
-        for _, e in ipairs(rows) do
-            if e.run == racedRun then present = true break end
-        end
-        if not present then
-            rows[#rows + 1] = { run = racedRun,
-                tag = (racedRun.importedFrom and (racedRun.importedFrom:match("^([^%-]+)") or "import"))
-                    or M.TierLabel(racedRun.chests) }
-        end
-    end
-    for _, entry in ipairs(rows) do
+    -- ONE row order for the panel AND the track lanes (BuildDisplayRows):
+    -- stable priority chain by default; the time/now headers re-sort it on
+    -- the player's explicit click (the system itself still never reorders).
+    for _, entry in ipairs(Splits.BuildDisplayRows(st)) do
         if n >= MAX_ROWS then break end
         SetRow(entry.run, entry.tag or M.TierLabel(entry.run.chests),
             entry.run == racedRun, entry.colorIdx)

@@ -295,8 +295,10 @@ local function AcquireRow(i)
         end)
         return b
     end
-    row.share = ActionButton(COL.SHARE, "Interface\\ChatFrame\\ChatFrameExpandArrow")
-    row.share.tex:SetVertexColor(Style.GetAccent())
+    -- The share glyph is the addon's own hourglass mark (Fredrik 2026-07-21:
+    -- "na use it" — no separate export icon; the art is full-color, so no
+    -- vertex tint). Hover still brightens via the ActionButton alpha.
+    row.share = ActionButton(COL.SHARE, "Interface\\AddOns\\KeystoneGhost\\minimap-icon.tga")
     row.share.tipText = "Share — copy this ghost's export string"
     row.share:SetScript("OnClick", function(self)
         local r = self.row
@@ -564,22 +566,29 @@ function Library:RefreshIfShown()
     if frame and frame:IsShown() then Library:Refresh() end
 end
 
+--- The Edit Mode "Scale" slider (db.scale) covers the whole addon UI — Bar,
+--- Roster Panel, and this window (Fredrik 2026-07-21 asked for a UI scale
+--- control; it already existed for the HUD, the Library now follows live).
+function Library:ApplyScale()
+    if frame then frame:SetScale(KG.db.scale or 1) end
+end
+
 function Library:Toggle()
     if not frame then BuildFrame() end
+    Library:ApplyScale()
     if frame:IsShown() then frame:Hide() else frame:Show() end
 end
 
 -- ── minimap button (Fredrik 2026-07-21: full button, upgraded from the proposed
 -- compartment-only entry; LibDBIcon also registers the Addon Compartment entry) ──
 --
--- ICON SWAP POINT (his order, same day): the icon below is a STOCK WoW ghost
--- texture — "no new resources" for now. When our own icon resource lands in an
--- update (a square power-of-two texture shipped in this folder, e.g.
--- Interface\AddOns\KeystoneGhost\minimap-icon.tga — same art family as
--- logo-icon.png), change THIS constant and nothing else; LibDBIcon accepts any
--- texture path or FileDataID. Consider aligning the TOC's ## IconTexture in the
--- same update so the addon list and the minimap wear the same mark.
-local MINIMAP_ICON = "Interface\\Icons\\Spell_Holy_GuardianSpirit"
+-- THE ICON SWAP, EXECUTED (Fredrik 2026-07-21, his own art): the runed
+-- hourglass with ghosts — a 128x128 32-bit uncompressed TGA converted from
+-- his 2048px original (frame border cropped so no square edge shows in the
+-- round button). The TOC's ## IconTexture wears the same file, so the addon
+-- list and the minimap match. To iterate the art: overwrite minimap-icon.tga
+-- (power-of-two square) — nothing else changes.
+local MINIMAP_ICON = "Interface\\AddOns\\KeystoneGhost\\minimap-icon.tga"
 
 local function SetupMinimapButton()
     local LDB = LibStub and LibStub("LibDataBroker-1.1", true)

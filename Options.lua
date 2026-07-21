@@ -76,6 +76,42 @@ function Options:Setup()
         function() return KG.db.sharePartyNames == true end,
         function(value) KG.db.sharePartyNames = value and true or false end)
 
+    -- Color vision (Fredrik 2026-07-21): the verdict red/green pair swaps for
+    -- the three most common color-vision deficiencies. Dropdown shape verified
+    -- against a live 12.x user in this install (BugSack: CreateControlTextContainer
+    -- + CreateDropdown over a proxy setting). The whole UI follows instantly —
+    -- every verdict site reads Style.GREEN/RED by reference.
+    if Settings.CreateDropdown and Settings.CreateControlTextContainer then
+        local CV_ORDER = { "default", "protanopia", "deuteranopia", "tritanopia" }
+        local CV_LABEL = {
+            default = "Default (red / green)",
+            protanopia = "Protanopia (red-weak): orange / blue",
+            deuteranopia = "Deuteranopia (green-weak): orange / blue",
+            tritanopia = "Tritanopia (blue-yellow): red / teal",
+        }
+        local function GetColorVisionOptions()
+            local container = Settings.CreateControlTextContainer()
+            for i, key in ipairs(CV_ORDER) do container:Add(i, CV_LABEL[key]) end
+            return container:GetData()
+        end
+        local cvSetting = Settings.RegisterProxySetting(category, "KEYSTONEGHOST_COLOR_VISION",
+            Settings.VarType.Number, "Color vision", 1,
+            function()
+                for i, key in ipairs(CV_ORDER) do
+                    if key == (KG.db.colorVision or "default") then return i end
+                end
+                return 1
+            end,
+            function(value)
+                KG.db.colorVision = CV_ORDER[value] or "default"
+                KG.Style.ApplyColorVision(KG.db.colorVision)
+                KG.Bar:Refresh()
+                KG.Splits:Refresh()
+            end)
+        Settings.CreateDropdown(category, cvSetting, GetColorVisionOptions,
+            "Swap the ahead/behind verdict colors for common color-vision deficiencies. Applies everywhere a red/green verdict shows — the Gap, the zone, roster deltas.")
+    end
+
     -- Forces readout (the count display toggle — Fredrik's own idea, 2026-07-20):
     -- checkbox ON = percent, the default (an on-by-default box asserts the norm);
     -- unticking switches every site to the raw count. Display-only — the race math

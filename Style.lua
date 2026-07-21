@@ -15,9 +15,41 @@ KG.Style = Style
 local FALLBACK_FONT = "Fonts\\FRIZQT__.TTF"
 local FALLBACK_ACCENT = { 0.05, 0.83, 0.62 } -- Ellesmere green
 
-Style.GREEN = { 0.3, 0.8, 0.3 }   -- Ellesmere "completed" green
-Style.RED = { 0.9, 0.35, 0.35 }
+Style.GREEN = { 0.3, 0.8, 0.3 }   -- the VERDICT "good" color (mutated in place by ApplyColorVision)
+Style.RED = { 0.9, 0.35, 0.35 }   -- the VERDICT "bad" color (same)
 Style.GRAY = { 0.55, 0.55, 0.55 } -- disarmed/neutral (matches Splits' pending grey)
+
+-- Color-vision palettes (Fredrik 2026-07-21: "make it work if you have the
+-- most common color-blindness type"). The verdict pair swaps wholesale; every
+-- verdict site reads Style.GREEN/RED by TABLE REFERENCE each refresh, so
+-- ApplyColorVision mutates the two tables in place and the whole UI follows.
+-- Pairs: red-green deficiencies (protan/deutan) get the standard blue/orange
+-- accessible pair; tritan (blue-yellow) keeps red but pairs it with teal.
+-- Identity colors (chest ticks, pairing plates, accent) are NOT verdicts and
+-- stay untouched.
+Style.COLOR_VISION = {
+    default      = { good = { 0.3, 0.8, 0.3 },  bad = { 0.9, 0.35, 0.35 } },
+    protanopia   = { good = { 0.35, 0.55, 1 },  bad = { 1, 0.62, 0.1 } },
+    deuteranopia = { good = { 0.35, 0.55, 1 },  bad = { 1, 0.62, 0.1 } },
+    tritanopia   = { good = { 0.1, 0.8, 0.75 }, bad = { 0.95, 0.3, 0.4 } },
+}
+
+function Style.ApplyColorVision(mode)
+    local p = Style.COLOR_VISION[mode] or Style.COLOR_VISION.default
+    for i = 1, 3 do
+        Style.GREEN[i] = p.good[i]
+        Style.RED[i] = p.bad[i]
+    end
+end
+
+local function RgbHex(c)
+    return string.format("%02x%02x%02x",
+        math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5))
+end
+
+--- Verdict colors as chat-escape hex (recomputed per call — palette-aware).
+function Style.GoodHex() return RgbHex(Style.GREEN) end
+function Style.BadHex() return RgbHex(Style.RED) end
 Style.TEXT = { 0.9, 0.9, 0.9 }    -- Ellesmere objective text color
 Style.BAR_BG = { 0.12, 0.12, 0.12, 0.9 }
 Style.TICK3 = { 0.4, 1, 0.4 }     -- +3 threshold tick
