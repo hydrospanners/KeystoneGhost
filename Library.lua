@@ -18,13 +18,16 @@ local Style = KG.Style
 local Library = {}
 KG.Library = Library
 
-local WIDTH, HEIGHT = 620, 440
+-- 690 wide since 2026-07-21 (was 620): the Raider.IO owner cell carries the
+-- set word ("Raider.IO · Guild best") — static bump, his sanctioned fallback
+-- to dynamic sizing, and imports with realm names breathe too.
+local WIDTH, HEIGHT = 690, 440
 local PAD = 12
 local TITLE_H, HEADER_H, GROUP_H, ROW_H, BOTTOM_H = 30, 18, 22, 24, 34
 -- Column x-offsets inside a row. Reaction round 2026-07-21 (Fredrik): the share
 -- button sits FAR LEFT, delete stays FAR RIGHT — the destructive action lives
 -- alone at the opposite edge from everything you'd click routinely.
-local COL = { SHARE = 0, LVL = 26, TIER = 62, TIME = 116, DATE = 168, ROUTE = 214, OWNER = 400, DEL = 552 }
+local COL = { SHARE = 0, LVL = 26, TIER = 62, TIME = 116, DATE = 168, ROUTE = 214, OWNER = 400, DEL = 622 }
 local OWNER_W, ROUTE_W = COL.DEL - COL.OWNER - 6, COL.OWNER - COL.ROUTE - 8
 
 local GOLD = { 1, 0.82, 0.15 } -- the pin gold (Splits' lock tint)
@@ -57,6 +60,13 @@ end
 --- The owner cell: class-colored short name; "(you)" on the current character;
 --- imports wear a dim in-arrow mark + Name-Realm (the sender identity).
 local function OwnerText(row)
+    if row.charKey == KG.RIO_CHAR then
+        -- Name · set word (his metadata order 2026-07-21): the one honest extra
+        -- a replay carries — no Who exists for replays (their guild-best party
+        -- lives in a timeline-less file), and When is the WHEN column's job.
+        local src = row.run.rioSource
+        return "Raider.IO" .. (src and (" · " .. src:sub(1, 1):upper() .. src:sub(2)) or "")
+    end
     local name, realm, class = ParseCharKey(row.charKey)
     local hex = ClassColorHex(class)
     if row.run.importedFrom then
@@ -107,7 +117,10 @@ local function RowTip(row)
         -- Legacy-grade badge (no brand in-game — the neutral format name only).
         tip[#tip + 1] = "KPG1 ghost code — boss times only, approximate on deathful runs"
     elseif run.legacy == "RIO" then
-        tip[#tip + 1] = "Converted Raider.IO replay — real forces curve (per-award steps), clock honest to ±3 s"
+        -- The set word (their sources[] → "guild best"…) joins the Library tip
+        -- too (his metadata question 2026-07-21) — Splits/Bar already carry it.
+        tip[#tip + 1] = "Converted Raider.IO replay" .. (run.rioSource and (" — " .. run.rioSource) or "")
+            .. " — real forces curve (per-award steps), clock honest to ±3 s"
     end
     if run.routeName then
         local rd = KG.Ghosts:RouteForHash(run.routeHash)
@@ -193,6 +206,21 @@ local function AcquireGroupHeader(i)
     h.text:SetTextColor(Style.GetAccent())
     frame.groupPool[i] = h
     return h
+end
+
+--- One muted line under an empty dungeon's header — the honest empty state
+--- (season-roster listing, 2026-07-21): says HOW a ghost appears here instead
+--- of the dungeon silently missing from the list.
+local function AcquireHint(i)
+    local fs = frame.hintPool[i]
+    if fs then return fs end
+    fs = frame.content:CreateFontString(nil, "OVERLAY")
+    Style.SetFont(fs, 10)
+    fs:SetHeight(ROW_H) -- position set per refresh (single TOPLEFT anchor)
+    fs:SetJustifyV("MIDDLE")
+    fs:SetTextColor(0.45, 0.45, 0.48)
+    frame.hintPool[i] = fs
+    return fs
 end
 
 local function AcquireRow(i)
@@ -285,6 +313,23 @@ local function AcquireRow(i)
     -- luminance-alpha, so the accent vertex tint colors it and hover
     -- brightens via the ActionButton alpha.
     row.share = ActionButton(COL.SHARE, "Interface\\AddOns\\KeystoneGhost\\share-icon.tga")
+    -- The Raider.IO mark in the share slot doubles as the LINK DOOR (his
+    -- 2026-07-21 order "clicking it should open the RaiderIO URL in a copy
+    -- window"): the logo, click → copy popup with the raider.io run page.
+    -- Texture + tooltip set per refresh; a cached ghost without a stored URL
+    -- keeps the logo but makes no click claim and the click does nothing.
+    row.rioMark = ActionButton(COL.SHARE, nil)
+    row.rioMark:SetScript("OnClick", function(self)
+        local url = self.row and self.row.run and self.row.run.rioUrl
+        if url then
+            StaticPopup_Show("KEYSTONEGHOST_LINK", nil, nil, url)
+        else
+            -- Honest no-op (his silent-click report 2026-07-21): ghosts banked
+            -- before the link update carry no URL until a re-sight backfills it.
+            print("|cff88ccffKeystoneGhost|r: no raider.io link stored for this ghost yet"
+                .. " — enter its dungeon with RaiderIO loaded and it fills in.")
+        end
+    end)
     row.share.tex:SetVertexColor(Style.GetAccent())
     row.share.tipText = "Share — copy this ghost's export string"
     row.share:SetScript("OnClick", function(self)
@@ -407,17 +452,8 @@ local function BuildFrame()
     sep:SetPoint("TOPLEFT", 1, -TITLE_H)
     sep:SetPoint("TOPRIGHT", -3, -TITLE_H)
 
-    local close = CreateFrame("Button", nil, title)
-    close:SetSize(18, 18)
+    local close = Style.CloseButton(title, function() frame:Hide() end)
     close:SetPoint("RIGHT", -8, 0)
-    close.text = close:CreateFontString(nil, "OVERLAY")
-    Style.SetFont(close.text, 13)
-    close.text:SetPoint("CENTER")
-    close.text:SetText("×")
-    close.text:SetTextColor(0.55, 0.55, 0.55)
-    close:SetScript("OnEnter", function() close.text:SetTextColor(1, 1, 1) end)
-    close:SetScript("OnLeave", function() close.text:SetTextColor(0.55, 0.55, 0.55) end)
-    close:SetScript("OnClick", function() frame:Hide() end)
 
     -- Column header (the Roster Panel idiom: fixed columns, dim caps).
     local header = CreateFrame("Frame", nil, frame)
@@ -444,7 +480,7 @@ local function BuildFrame()
     frame.content:SetWidth(WIDTH - PAD * 2 - 18)
     frame.content:SetHeight(1)
     scroll:SetScrollChild(frame.content)
-    frame.groupPool, frame.rowPool = {}, {}
+    frame.groupPool, frame.rowPool, frame.hintPool = {}, {}, {}
 
     frame.empty = frame:CreateFontString(nil, "OVERLAY")
     Style.SetFont(frame.empty, 12)
@@ -492,28 +528,43 @@ function Library:Refresh()
     -- the current replay. Self-gating outside; only re-refreshes on real change.
     KG.Ghosts:CacheRioOnSight()
     local S = KG.Scenario
+    -- Season roster seeds a group per dungeon (bug report 2026-07-21: dungeons
+    -- without data were invisible); unreadable roster → nil → data-only, as before.
     local groups = M.LibraryModel(KG.db.runs, KG.Ghosts:MyPicks(), function(mapID)
         return S:GetMapName(mapID)
-    end)
+    end, S:GetSeasonMapIDs())
+    local rioHint = type(_G.RaiderIO) == "table"
+        and "No ghosts yet — finish a run here, or walk in with Raider.IO to bank its replay."
+        or "No ghosts yet — finish a run here, or import one."
 
-    local usedG, usedR, y = 0, 0, 0
+    local usedG, usedR, usedH, y = 0, 0, 0, 0
     for _, g in ipairs(groups) do
         usedG = usedG + 1
         local h = AcquireGroupHeader(usedG)
         h:SetPoint("TOPLEFT", 0, -y)
         h:SetPoint("TOPRIGHT", 0, -y)
         local n = #g.rows
-        h.text:SetText(string.format("%s |cff6f6f78· %d ghost%s|r", g.name, n, n == 1 and "" or "s"))
+        h.text:SetText(n == 0 and (g.name .. " |cff6f6f78· no ghosts yet|r")
+            or string.format("%s |cff6f6f78· %d ghost%s|r", g.name, n, n == 1 and "" or "s"))
         h.text:SetTextColor(Style.GetAccent())
         h:Show()
         y = y + GROUP_H
+
+        if n == 0 then
+            usedH = usedH + 1
+            local hint = AcquireHint(usedH)
+            hint:SetPoint("TOPLEFT", frame.content, "TOPLEFT", 6, -y)
+            hint:SetText(rioHint)
+            hint:Show()
+            y = y + ROW_H
+        end
 
         for _, r in ipairs(g.rows) do
             usedR = usedR + 1
             local row = AcquireRow(usedR)
             r.groupName = g.name
             row.row = r
-            row.route.row, row.share.row, row.del.row = r, r, r
+            row.route.row, row.share.row, row.del.row, row.rioMark.row = r, r, r, r
             row:SetPoint("TOPLEFT", 6, -y)
             row:SetPoint("TOPRIGHT", -2, -y)
 
@@ -528,7 +579,10 @@ function Library:Refresh()
             row.time:SetAlpha(a)
             row.date:SetText(DateShort(r.run.completedAt))
             row.date:SetAlpha(a * 0.8)
-            local routeName = r.run.routeName and M.Ellipsize(M.StripColors(r.run.routeName), 28) or "—"
+            -- "n/a" on Raider.IO rows (his call 2026-07-21): a replay CANNOT
+            -- carry a route, while a plain "—" just reads as absent data.
+            local routeName = r.run.routeName and M.Ellipsize(M.StripColors(r.run.routeName), 28)
+                or (r.charKey == KG.RIO_CHAR and "n/a" or "—")
             row.route.text:SetText(routeName)
             row.route.text:SetTextColor(ROUTE_GRAY[1], ROUTE_GRAY[2], ROUTE_GRAY[3])
             row.route.text:SetAlpha(a)
@@ -551,18 +605,30 @@ function Library:Refresh()
                 row.edge:Hide()
                 row.bg:Hide()
             end
-            -- Raider.IO rows: share hidden (not yours to re-export — the codec
-            -- refuses anyway); DELETE stays — it is the cache-eviction door, and
-            -- the row honestly resurrects on next sight while RaiderIO serves it.
-            row.share:SetShown(not depleted and r.charKey ~= KG.RIO_CHAR)
+            -- Raider.IO rows (his round, 2026-07-21): the logo fills the share
+            -- slot (share = not yours to re-export, the codec refuses anyway),
+            -- and DELETE is gone too — the cache re-banked on the very next
+            -- refresh inside the dungeon, so the X was a lie ("you probably
+            -- cant delete it"). The row is a mirror; mirrors have no buttons.
+            local isRio = r.charKey == KG.RIO_CHAR
+            row.share:SetShown(not depleted and not isRio)
+            row.del:SetShown(not isRio)
+            local rioLogo = isRio and Style.RaiderIOLogo() or nil
+            if rioLogo then row.rioMark.tex:SetTexture(rioLogo) end
+            row.rioMark.tipText = (isRio and r.run.rioUrl)
+                and "Copy the raider.io run link" or nil
+            row.rioMark:SetShown(rioLogo ~= nil)
             row:Show()
             y = y + ROW_H
         end
     end
     for i = usedG + 1, #frame.groupPool do frame.groupPool[i]:Hide() end
     for i = usedR + 1, #frame.rowPool do frame.rowPool[i]:Hide() end
+    for i = usedH + 1, #frame.hintPool do frame.hintPool[i]:Hide() end
     frame.content:SetHeight(math.max(y, 1))
-    frame.empty:SetShown(usedR == 0)
+    -- Per-group hints carry the empty story now; the centered line remains only
+    -- when even the season roster gave nothing to list (no groups at all).
+    frame.empty:SetShown(usedG == 0)
 
     local tag = KG.db.shareTag
     frame.footer:SetText(tag

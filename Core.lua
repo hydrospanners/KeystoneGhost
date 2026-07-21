@@ -98,37 +98,44 @@ function KG.Start()
     end)
 end
 
-StaticPopupDialogs["KEYSTONEGHOST_EXPORT"] = {
-    text = "Keystone Ghost — copy the export string:",
-    button1 = CLOSE,
-    hasEditBox = true,
-    editBoxWidth = 280,
-    OnShow = function(self, data)
-        local eb = self.editBox or self.EditBox
-        if eb then
-            eb:SetMaxLetters(0)
-            eb:SetText(data or "")
-            eb:HighlightText()
-            eb:SetFocus()
-            -- Self-close on copy (Fredrik 2026-07-20; the MDT pattern — their
-            -- export editbox does exactly this on Ctrl+C keyup). The editbox is
-            -- a SHARED StaticPopup frame: OnHide below clears the script so the
-            -- import popup never inherits it.
-            eb:SetScript("OnKeyUp", function(_, key)
-                if key == "C" and IsControlKeyDown() then
-                    Print("export copied.")
-                    self:Hide()
-                end
-            end)
-        end
-    end,
-    OnHide = function(self)
-        local eb = self.editBox or self.EditBox
-        if eb then eb:SetScript("OnKeyUp", nil) end
-    end,
-    EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
-    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-}
+--- One copy-popup recipe, two dialogs (export string, raider.io link — the
+--- link door is Fredrik's 2026-07-21 order). Selected editbox, Ctrl+C prints
+--- and self-closes (the MDT pattern, Fredrik 2026-07-20). The editbox is a
+--- SHARED StaticPopup frame: OnHide clears the script so the import popup
+--- never inherits it.
+local function CopyDialog(text, copiedMsg)
+    return {
+        text = text,
+        button1 = CLOSE,
+        hasEditBox = true,
+        editBoxWidth = 280,
+        OnShow = function(self, data)
+            local eb = self.editBox or self.EditBox
+            if eb then
+                eb:SetMaxLetters(0)
+                eb:SetText(data or "")
+                eb:HighlightText()
+                eb:SetFocus()
+                eb:SetScript("OnKeyUp", function(_, key)
+                    if key == "C" and IsControlKeyDown() then
+                        Print(copiedMsg)
+                        self:Hide()
+                    end
+                end)
+            end
+        end,
+        OnHide = function(self)
+            local eb = self.editBox or self.EditBox
+            if eb then eb:SetScript("OnKeyUp", nil) end
+        end,
+        EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+    }
+end
+StaticPopupDialogs["KEYSTONEGHOST_EXPORT"] = CopyDialog(
+    "Keystone Ghost — copy the export string:", "export copied.")
+StaticPopupDialogs["KEYSTONEGHOST_LINK"] = CopyDialog(
+    "Keystone Ghost — copy the raider.io run link:", "link copied.")
 
 StaticPopupDialogs["KEYSTONEGHOST_IMPORT"] = {
     text = "Keystone Ghost — paste an export string:",

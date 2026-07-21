@@ -83,6 +83,16 @@ function Style.AccentHex()
     return string.format("%02x%02x%02x", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
 end
 
+--- The RaiderIO logo texture path, or nil (their TOC metadata — never hardcode
+--- their asset path). Shared: Bar runner icons/raced badge + the Library's
+--- Raider.IO owner cell (his screenshot report 2026-07-21: the banked row read
+--- as just another ghost without the logo).
+function Style.RaiderIOLogo()
+    if not (C_AddOns and C_AddOns.GetAddOnMetadata) then return nil end
+    local ok, icon = pcall(C_AddOns.GetAddOnMetadata, "RaiderIO", "IconTexture")
+    return (ok and type(icon) == "string" and icon ~= "") and icon or nil
+end
+
 local function FontPath()
     local E = _G.EllesmereUI
     if E and E.GetFontPath then
@@ -141,6 +151,23 @@ function Style.Hover(parent, w, h)
         GameTooltip:Hide()
     end)
     return f
+end
+
+--- The house close button: quiet grey × that brightens on hover — the Ghost
+--- Library's recipe, extracted so every window closes with the same X
+--- (Fredrik 2026-07-21: the summary wore the default red UIPanelCloseButton).
+function Style.CloseButton(parent, onClick)
+    local close = CreateFrame("Button", nil, parent)
+    close:SetSize(18, 18)
+    close.text = close:CreateFontString(nil, "OVERLAY")
+    Style.SetFont(close.text, 13)
+    close.text:SetPoint("CENTER")
+    close.text:SetText("×")
+    close.text:SetTextColor(Style.GRAY[1], Style.GRAY[2], Style.GRAY[3])
+    close:SetScript("OnEnter", function() close.text:SetTextColor(1, 1, 1) end)
+    close:SetScript("OnLeave", function() close.text:SetTextColor(Style.GRAY[1], Style.GRAY[2], Style.GRAY[3]) end)
+    close:SetScript("OnClick", onClick)
+    return close
 end
 
 -- Panel chrome recipe (single source — SkinPanel applies, RefreshPanel re-applies).

@@ -478,14 +478,13 @@ local function Build()
     frame.pullText:SetPoint("BOTTOM", 0, 6)
     Style.SetFont(frame.pullText, 10)
 
-    -- Close button for the post-run summary (default UI element, hidden during a run).
-    frame.closeBtn = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-    frame.closeBtn:SetSize(18, 18)
-    frame.closeBtn:SetPoint("TOPRIGHT", -1, -1)
-    frame.closeBtn:SetScript("OnClick", function()
+    -- Close button for the post-run summary (hidden during a run) — the same ×
+    -- the Ghost Library wears, not the default red X (Fredrik 2026-07-21).
+    frame.closeBtn = Style.CloseButton(frame, function()
         KG.Recorder.summary = nil
         Bar:Refresh()
     end)
+    frame.closeBtn:SetPoint("TOPRIGHT", -1, -1)
     frame.closeBtn:Hide()
 
 
@@ -526,12 +525,11 @@ local function Runner(i, colorIdx)
     return f
 end
 
---- The RaiderIO logo texture path, or nil (pulled from their TOC metadata so we
---- never hardcode their asset path). Shared by the raced badge and runner icons.
+--- The RaiderIO logo texture path, or nil — hoisted to Style.RaiderIOLogo
+--- (2026-07-21) so the Library owner cell shares it; alias kept for the two
+--- call sites below.
 local function RaiderIOLogo()
-    if not (C_AddOns and C_AddOns.GetAddOnMetadata) then return nil end
-    local ok, icon = pcall(C_AddOns.GetAddOnMetadata, "RaiderIO", "IconTexture")
-    return (ok and type(icon) == "string" and icon ~= "") and icon or nil
+    return Style.RaiderIOLogo()
 end
 
 local function ApplyRunnerIcon(tex, run)

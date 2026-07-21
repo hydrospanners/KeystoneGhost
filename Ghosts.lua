@@ -278,6 +278,12 @@ function G:StoreRioGhost(run)
                         and old.level == run.level
                         and old.durationSec == run.durationSec
                         and old.completedAt == run.completedAt) then
+                    -- Same replay: the STORED table survives (identity is
+                    -- load-bearing) but fresh metadata lands on it — a
+                    -- re-sight after an addon update backfills fields older
+                    -- banks never stored (rioUrl, 2026-07-21).
+                    old.rioUrl = run.rioUrl or old.rioUrl
+                    old.rioSource = run.rioSource or old.rioSource
                     return old
                 end
             end
@@ -322,6 +328,7 @@ function G:BuildRioGhost(mapID)
     end
     raw.rioSource = RioSourceWord(replay.sources)
     raw.rioRunId = tonumber(replay.keystone_run_id)
+    raw.rioUrl = replay.run_url -- CleanRun gates it to a real raider.io link
     local run = M.CleanRun(raw)
     if not run then return nil end
     return G:StoreRioGhost(run)
@@ -346,14 +353,16 @@ function G:BuildRioRef(mapID, pinned)
     return mirror
 end
 
---- Cache-on-sight door (staging PEW, Library refresh): gated on the challenge
---- map being readable — there is no public RIO-dungeon-id → challenge-mapID
---- mapping, and a guessed mapID would poison the store. Worst case the Library
---- row appears at key start instead; correctness is never at risk. The Library
---- refresh only fires when the stored table actually CHANGED — Refresh itself
---- calls this, so an unconditional refresh would recurse.
+--- Cache-on-sight door (staging PEW, Library refresh): gated on the map being
+--- readable — there is no public RIO-dungeon-id → challenge-mapID mapping, and
+--- a guessed mapID would poison the store. GetStagingMapID makes "just walk
+--- in" literal (instance-name match pre-key; his reload report 2026-07-21 —
+--- the active-id gate only opened at key start); its refusals mean worst case
+--- the row appears at key start instead, correctness never at risk. The
+--- Library refresh only fires when the stored table actually CHANGED —
+--- Refresh itself calls this, so an unconditional refresh would recurse.
 function G:CacheRioOnSight()
-    local mapID = S:GetChallengeMapID()
+    local mapID = S:GetStagingMapID()
     if not mapID then return end
     local prev = G:GetStoredRioRun(mapID)
     local run = G:BuildRioGhost(mapID)

@@ -2,7 +2,7 @@
 
 All notable changes to Keystone Ghost are listed here.
 
-## [Unreleased]
+## [0.9.0] - 2026-07-21
 
 - Ghost Library pins reworked: one selected row per dungeon, per character.
   A pin now races its dungeon at ANY key level — race your +12 ghost in a
@@ -38,7 +38,7 @@ All notable changes to Keystone Ghost are listed here.
   still never target it. Switching replays in RaiderIO's own selector mid-run
   is picked up within ~5 s. If the full replay ever becomes unreadable, the old
   live mirror still races as a fallback — now with boss-identity laps too.
-- Change-driven recording (the RaiderIO event-log lesson): the recorder now
+- Change-driven recording: the recorder now
   captures on the scenario-criteria events instead of a 2 s clock — every
   forces change and boss kill lands at its exact second, and timelines are
   step-shaped (flat between changes, exactly how the count actually moves),
@@ -50,6 +50,18 @@ All notable changes to Keystone Ghost are listed here.
   keep racing and importing unchanged — same format, same math.
 - The RaiderIO replay mirror (and its test-mode demo twin) record change-only
   step nodes too — the replay ghost's moves are no longer smeared up to 2 s.
+- The X that closes the post-run summary now matches the Ghost Library's
+  close button instead of the default red one.
+- The Ghost Library lists every dungeon of the season, not just the ones you
+  have ghosts for. Empty dungeons say so and tell you how to get one — run
+  the dungeon, import a ghost, or (with RaiderIO) just walk in and its replay
+  is banked for you.
+- The Raider.IO library row shows its pedigree: the RaiderIO logo sits where
+  share lives on your own rows, the owner cell names the replay set
+  ("Raider.IO · Guild best"), route reads n/a (replays can't carry one), and
+  clicking the logo opens a copy window with the raider.io run link. No
+  delete on that row — it's a live mirror of RaiderIO's pick, it would just
+  come straight back. The window grew a bit wider for the longer names.
 
 ## [0.8.1]
 

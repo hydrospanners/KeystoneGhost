@@ -235,6 +235,12 @@ function M.CleanRun(raw)
         -- display-only / rio-scoped: spoofing them via an import earns no privilege.
         rioSource = type(raw.rioSource) == "string" and raw.rioSource:sub(1, 20) or nil,
         rioRunId = tonumber(raw.rioRunId),
+        -- Their run_url, stored ONLY when it really is a raider.io link (the
+        -- click-to-copy box must never serve an arbitrary URL a crafted table
+        -- could smuggle in — the codec refuses RIO imports anyway, belt and
+        -- suspenders). Pipe-strip kills texture/link escapes; 160 caps junk.
+        rioUrl = (type(raw.rioUrl) == "string" and raw.rioUrl:find("^https://raider%.io/") ~= nil)
+            and raw.rioUrl:gsub("|", ""):sub(1, 160) or nil,
         snapshots = snaps,
     }
     local chests = tonumber(raw.chests) or 0
@@ -654,8 +660,20 @@ end
 --- pick[mapID] — char + level + tier; Raider.IO rows match on char alone —
 --- is flagged `pinned`. One selected row per dungeon, per character
 --- (Fredrik 2026-07-21).
-function M.LibraryModel(runs, pick, nameFor)
+--- `seasonMapIDs` (optional array) seeds a group for EVERY season dungeon, so
+--- dungeons without data still show — with an honest empty state instead of
+--- silently missing (Fredrik's bug report, 2026-07-21: "I don't see all
+--- dungeons"). Empty groups sort by the same name rule.
+function M.LibraryModel(runs, pick, nameFor, seasonMapIDs)
     local groups, byMap = {}, {}
+    for _, mapID in ipairs(seasonMapIDs or {}) do
+        if not byMap[mapID] then
+            local name = nameFor and nameFor(mapID) or nil
+            local g = { mapID = mapID, name = name or ("map " .. tostring(mapID)), rows = {} }
+            byMap[mapID] = g
+            groups[#groups + 1] = g
+        end
+    end
     for charKey, maps in pairs(runs or {}) do
         for mapID, byLevel in pairs(maps) do
             for level, tiers in pairs(byLevel) do
