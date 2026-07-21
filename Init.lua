@@ -7,6 +7,11 @@ NS.KG = KG
 
 KG.ADDON_NAME = ADDON_NAME
 KG.MAX_TIER = 3 -- chest tiers: 0 = depleted, 1..3 = +1/+2/+3
+KG.RIO_CHAR = "Raider.IO" -- pseudo-charKey for cached converted replays (first-class
+                          -- replay, 2026-07-21). Dashless BY DESIGN: real charKeys are
+                          -- always Name-Realm-CLASS, so this can never collide, and
+                          -- ShortName/ParseCharKey pass it through whole as a neutral
+                          -- display name. The import codec refuses it as an exporter.
 
 -- Addon version from the TOC; "dev" outside the client (offline test harness).
 KG.VERSION = (function()

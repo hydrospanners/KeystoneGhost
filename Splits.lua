@@ -87,7 +87,13 @@ function Splits.BuildDisplayRows(st)
         lead = { run = racedRun, tag = "RIO", live = true }
     end
     for idx, entry in ipairs(st.roster or {}) do
-        rows[#rows + 1] = { run = entry.run, tag = entry.tag, colorIdx = idx }
+        -- While the live MIRROR leads (degraded path), the stored Raider.IO row
+        -- would be a second "RIO" line — possibly a different replay. One RIO
+        -- identity on screen at a time; the stored row returns when the mirror
+        -- leaves. Display-only, so the stable-order rule is untouched.
+        if not (lead and entry.run.legacy == "RIO") then
+            rows[#rows + 1] = { run = entry.run, tag = entry.tag, colorIdx = idx }
+        end
     end
     if racedRun and not ref.live then
         local present = false
@@ -97,6 +103,7 @@ function Splits.BuildDisplayRows(st)
         if not present then
             rows[#rows + 1] = { run = racedRun,
                 tag = (racedRun.importedFrom and (racedRun.importedFrom:match("^([^%-]+)") or "import"))
+                    or (racedRun.legacy == "RIO" and "RIO")
                     or M.TierLabel(racedRun.chests) }
         end
     end
@@ -254,6 +261,7 @@ local function Build()
             if button ~= "LeftButton" then return end
             if IsShiftKeyDown() and KG.Comm then
                 local ck, mid, lvl, tier = KG.Ghosts:FindRunOwner(self.runRef)
+                if ck == KG.RIO_CHAR then ck = nil end -- not shareable: fall through to the race click
                 if ck then
                     local name = KG.Scenario:GetMapName(mid) or ("map " .. mid)
                     local pretty = string.format("%s +%d (%s)", name, lvl,
@@ -282,6 +290,9 @@ end
 local function RowTip(run, tag)
     local dateFn = date or os.date
     local tip = { tag .. " ghost — " .. M.FormatClock(run.durationSec or 0) }
+    if run.legacy == "RIO" then
+        tip[#tip + 1] = "Converted Raider.IO " .. (run.rioSource or "replay")
+    end
     if run.level then tip[#tip + 1] = string.format("Key level: +%d · %s", run.level, M.TierLabel(run.chests)) end
     if run.completedAt and dateFn then
         local okD, d = pcall(dateFn, "%Y-%m-%d", run.completedAt)

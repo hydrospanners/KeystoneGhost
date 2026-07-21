@@ -4,6 +4,25 @@ All notable changes to Keystone Ghost are listed here.
 
 ## [Unreleased]
 
+- The Raider.IO ghost is now a real ghost, not a live mirror: the full replay
+  (per-award forces log, boss kills with identity, deaths) is converted into a
+  normal stored run the moment it is seen — skulls sit at their true spots from
+  second 0:00, boss laps pair by boss (no more wrong-boss comparisons on a
+  different route, the old first-run jank), and the Gap runs on the same math
+  as every stored ghost. Clock honest to ±3 s (their timers exclude the death
+  penalty; ours include it — converted and verified).
+- The Ghost Library grows a "Raider.IO" owner: one prefilled ghost per dungeon,
+  banked automatically when you enter the dungeon or start a key (their replay
+  list is private, so rows appear per dungeon as you play). Pin it to race it
+  on ANY key level of that dungeon — even over your own ghosts; unpinned it is
+  always the LAST pick, only racing when you have no ghost of your own. Delete
+  evicts the cache (the row returns next time RaiderIO serves the replay);
+  Raider.IO ghosts can't be shared.
+- The Raider.IO ghost also fills the last roster slot when there is room, wears
+  the RaiderIO logo, and can be raced by clicking its row — automatic Overtakes
+  still never target it. Switching replays in RaiderIO's own selector mid-run
+  is picked up within ~5 s. If the full replay ever becomes unreadable, the old
+  live mirror still races as a fallback — now with boss-identity laps too.
 - Change-driven recording (the RaiderIO event-log lesson): the recorder now
   captures on the scenario-criteria events instead of a 2 s clock — every
   forces change and boss kill lands at its exact second, and timelines are

@@ -133,8 +133,8 @@ function G:BuildRioReference()
         -- The mirror runs in RaiderIO's OWN count units (rep.trash against their
         -- total); cross-total math maps it against the live scenario units (±1 on
         -- season retunes — cosmetic, fraction space absorbs it).
-        run = { durationSec = dur, total = total,
-            snapshots = { { 0, 0, 0 } }, bossKills = {}, bossNames = {}, bossCounts = {} },
+        run = { durationSec = dur, total = total, snapshots = { { 0, 0, 0 } },
+            bossKills = {}, bossNames = {}, bossCounts = {}, bossIDs = {}, bossJIDs = {} },
     }
 end
 
@@ -167,7 +167,9 @@ function G:UpdateRioMirror(ref, t)
     if type(rep.bosses) == "table" then
         for _, b in ipairs(rep.bosses) do
             if type(b) == "table" and b.dead and tonumber(b.killed) then
-                kills[#kills + 1] = { t = b.killed / 1000, jid = b.encounter and b.encounter.journal_encounter_id }
+                kills[#kills + 1] = { t = b.killed / 1000,
+                    id = b.encounter and tonumber(b.encounter.encounter_id),
+                    jid = b.encounter and b.encounter.journal_encounter_id }
             end
         end
         table.sort(kills, function(a, b2) return a.t < b2.t end)
@@ -184,6 +186,12 @@ function G:UpdateRioMirror(ref, t)
         if kills[i].t >= ref.mirrorFrom then
             run.bossCounts[i] = count -- landed on our watch: count is exact
         end
+        -- Identity stamps (first-class replay, 2026-07-21): the summary carries the
+        -- encounter ids, so even the degraded mirror pairs laps/tooltips by BOSS
+        -- (LapDeltasByID) instead of the kill-order fallback that compared
+        -- different bosses on off-order routes — the original first-run complaint.
+        run.bossIDs[i] = kills[i].id
+        run.bossJIDs[i] = tonumber(kills[i].jid)
         if kills[i].jid and EJ_GetEncounterInfo then
             local okN, name = pcall(EJ_GetEncounterInfo, kills[i].jid)
             if okN and type(name) == "string" then run.bossNames[i] = name end
@@ -196,6 +204,162 @@ function G:UpdateRioMirror(ref, t)
     -- flats and smeared each step up to 2 s. AppendStepNode no-ops between
     -- changes and lands steps at the tick that watched them (≤ 0.5 s).
     M.AppendStepNode(run.snapshots, t, count, ref.nowBosses)
+end
+
+-- ── The first-class Raider.IO ghost (2026-07-21, superseding mirror-first) ────
+--
+-- RaiderIO holds the ENTIRE decoded replay in memory — full ms event log, boss
+-- encounter ids, deaths — behind a named global frame; only their per-tick summary
+-- is public API. Reaching the full object turns the replay into a normal stored
+-- ghost (ConvertRioReplay): full skulls from 0:00, identity laps, plain inversion
+-- math, Library citizenship. CACHE-ON-SIGHT because their full replay LIST is
+-- private: whenever the provider's pick is visible (staging, key start, Library
+-- refresh) it is converted and stored under KG.RIO_CHAR — one ghost per dungeon,
+-- the newest replay replacing the old. The tick mirror above stays as the
+-- degraded fallback (their internals are not API; every hop is feature-detected).
+
+--- The full Replay object from RaiderIO's replay frame provider, or nil.
+--- Chain verified against their core.lua (2026-07-21): CreateFrame named
+--- "<addon>_ReplayFrame", GetReplayDataProvider/GetReplay are pure getters, the
+--- provider is populated during STAGING (before the key) and auto-swapped per map.
+local function GetProviderReplay()
+    local frame = _G.RaiderIO_ReplayFrame
+    if type(frame) ~= "table" or type(frame.GetReplayDataProvider) ~= "function" then return nil end
+    local okP, provider = pcall(frame.GetReplayDataProvider, frame)
+    if not okP or type(provider) ~= "table" or type(provider.GetReplay) ~= "function" then return nil end
+    local okR, replay = pcall(provider.GetReplay, provider)
+    if not okR or type(replay) ~= "table" then return nil end
+    if replay.format_version ~= 2 then return nil end -- the forensics-verified shape only
+    return replay
+end
+
+--- Their sources[] → one display word; nil on anything unrecognized (the label
+--- then says "replay" — never a guessed claim about provenance).
+local RIO_SOURCE_WORDS = {
+    guild_best_replay = "guild best",
+    user_best_replay = "your best",
+    user_recent_replay = "recent run",
+    team_best_replay = "team best",
+    watched_replay = "watched",
+}
+local function RioSourceWord(sources)
+    if type(sources) ~= "table" then return nil end
+    for _, s in ipairs(sources) do
+        if RIO_SOURCE_WORDS[s] then return RIO_SOURCE_WORDS[s] end
+    end
+    return nil
+end
+
+local function RioLabel(run)
+    return string.format("RaiderIO %s +%d (%s)", run.rioSource or "replay",
+        run.level or 0, M.FormatClock(run.durationSec or 0))
+end
+
+--- Store/replace the one Raider.IO ghost for its dungeon. DIRECT write, not
+--- InsertRun: the provider's pick is authoritative — a new replay replaces the old
+--- across levels and even when slower (InsertRun's faster-incumbent rule would
+--- wrongly block it). Same-replay short-circuit returns the EXISTING stored table:
+--- table identity is load-bearing (Splits dedupe, Overtake state, runner
+--- smoothing all key on the run table). The ":rio" pin key is level-independent,
+--- so replacement never touches a pin.
+function G:StoreRioGhost(run)
+    local db = KG.db
+    local byMap = db.runs[KG.RIO_CHAR]
+    if byMap and byMap[run.mapID] then
+        for _, tiers in pairs(byMap[run.mapID]) do
+            for _, old in pairs(tiers) do
+                -- Same replay → the SAME table. keystone_run_id when present; an
+                -- id-less replay (off-spec but cheap to survive) dedupes on the
+                -- (level, duration, date) triple — without this, every sight would
+                -- mint a new table and the raced-ghost identity check would
+                -- crossfade-rebuild the race every provider peek.
+                if (old.rioRunId and old.rioRunId == run.rioRunId)
+                    or (not old.rioRunId and not run.rioRunId
+                        and old.level == run.level
+                        and old.durationSec == run.durationSec
+                        and old.completedAt == run.completedAt) then
+                    return old
+                end
+            end
+        end
+    end
+    db.runs[KG.RIO_CHAR] = db.runs[KG.RIO_CHAR] or {}
+    db.runs[KG.RIO_CHAR][run.mapID] = { [run.level] = { [run.chests] = run } }
+    G:InvalidateRoster()
+    return run
+end
+
+--- The cached Raider.IO ghost for a dungeon (any level — one exists by
+--- construction). Scans tier 0 too: an overtime replay is honestly Depleted and
+--- still races here — never-race-depleted governs the OWN-run chain, not the
+--- replay RaiderIO chose to track (so no M.BestRun, which skips tier 0).
+function G:GetStoredRioRun(mapID)
+    local byMap = KG.db.runs[KG.RIO_CHAR]
+    local byLevel = byMap and byMap[mapID]
+    if not byLevel then return nil end
+    local best
+    for _, tiers in pairs(byLevel) do
+        for _, run in pairs(tiers) do
+            if not best or (run.completedAt or 0) > (best.completedAt or 0) then best = run end
+        end
+    end
+    return best
+end
+
+--- Convert + store the provider's current replay for mapID; returns the STORED
+--- run or nil. Chests derive from par exactly like ImportKPG1 (tier 0 allowed —
+--- an overtime replay is what RaiderIO tracks, racing it stays legal).
+function G:BuildRioGhost(mapID)
+    if not mapID then return nil end
+    local replay = GetProviderReplay()
+    if not replay then return nil end
+    local raw = M.ConvertRioReplay(replay, { mapID = mapID, parTimeSec = S:GetParTimeSec(mapID) })
+    if not raw then return nil end
+    if raw.parTimeSec then
+        raw.chests = M.TierForDuration(raw.durationSec, raw.parTimeSec)
+    else
+        raw.chests = 1 -- unknown par: assume timed (the ImportKPG1 convention)
+    end
+    raw.rioSource = RioSourceWord(replay.sources)
+    raw.rioRunId = tonumber(replay.keystone_run_id)
+    local run = M.CleanRun(raw)
+    if not run then return nil end
+    return G:StoreRioGhost(run)
+end
+
+--- The rio reference, full-first: fresh convert → stored cache (RaiderIO absent
+--- or unreadable — the ghost still races from SavedVariables) → the live mirror
+--- (full object unreachable but the summary API alive). No `live` flag on the
+--- converted shapes: every bar/splits site then takes the normal stored-ghost
+--- paths, which is the entire point.
+function G:BuildRioRef(mapID, pinned)
+    local run = G:BuildRioGhost(mapID) or G:GetStoredRioRun(mapID)
+    if run then
+        return {
+            kind = "rio", startPinned = pinned or nil,
+            label = RioLabel(run),
+            run = run, durationSec = run.durationSec,
+        }
+    end
+    local mirror = G:BuildRioReference()
+    if mirror and pinned then mirror.startPinned = true end
+    return mirror
+end
+
+--- Cache-on-sight door (staging PEW, Library refresh): gated on the challenge
+--- map being readable — there is no public RIO-dungeon-id → challenge-mapID
+--- mapping, and a guessed mapID would poison the store. Worst case the Library
+--- row appears at key start instead; correctness is never at risk. The Library
+--- refresh only fires when the stored table actually CHANGED — Refresh itself
+--- calls this, so an unconditional refresh would recurse.
+function G:CacheRioOnSight()
+    local mapID = S:GetChallengeMapID()
+    if not mapID then return end
+    local prev = G:GetStoredRioRun(mapID)
+    local run = G:BuildRioGhost(mapID)
+    if run and run ~= prev and KG.Library and KG.Library.RefreshIfShown then
+        KG.Library:RefreshIfShown()
+    end
 end
 
 --- Display name for a ghost run's i-th boss kill — the ID dictionary at work
@@ -290,6 +454,12 @@ function G:DeleteRun(charKey, mapID, level, tier)
     if type(p) == "table" and p.char == charKey and (p.tier == nil or p.tier == tier) then
         db.pick[pk] = nil
     end
+    if charKey == KG.RIO_CHAR then
+        -- Deleting the Raider.IO row is cache eviction (it resurrects on next
+        -- sight — honest cache semantics); its dungeon-wide pin must not dangle
+        -- and silently resurrect a race with it.
+        db.pick[mapID .. ":rio"] = nil
+    end
     G:InvalidateRoster()
     G:SweepRoutes()
     return true
@@ -301,9 +471,22 @@ end
 --- 2026-07-21, loosening the 2026-07-19 rule): the automatic chain still never
 --- picks one, but an explicit pin is the player's deliberate override — "beat
 --- my depleted attempt properly" is a real race. Returns the new pinned state.
+--- The Raider.IO row pins DUNGEON-WIDE (Fredrik 2026-07-21: "unless I pin it"):
+--- one level-independent key, `mapID .. ":rio"` — the ghost races ANY key level
+--- of that dungeon, even over own/imported ghosts. A later deliberate normal pin
+--- clears it (the newer deliberate act wins); import auto-picks do NOT.
 function G:TogglePin(charKey, mapID, level, tier)
-    if not tier then return false end
     local db = KG.db
+    if charKey == KG.RIO_CHAR then
+        local rk = mapID .. ":rio"
+        if db.pick[rk] then
+            db.pick[rk] = nil
+            return false
+        end
+        db.pick[rk] = { char = charKey }
+        return true
+    end
+    if not tier then return false end
     local pk = mapID .. ":" .. level
     local p = db.pick[pk]
     if type(p) == "table" and p.char == charKey and p.tier == tier then
@@ -311,6 +494,7 @@ function G:TogglePin(charKey, mapID, level, tier)
         return false
     end
     db.pick[pk] = { char = charKey, tier = tier }
+    db.pick[mapID .. ":rio"] = nil -- a deliberate normal pin outranks the rio pin
     return true
 end
 
@@ -364,6 +548,12 @@ function G:ExportString(mapID, level, charKey, tier)
     local tiers = select(1, RunsFor(charKey or KG.CharacterKey(), mapID, level, false))
     local run = tiers and ((tier and tier >= 1 and tiers[tier]) or M.BestRun(tiers, 1))
     if not run or not run.snapshots then return nil, "no timed ghost recorded for that dungeon/level" end
+    if run.legacy == "RIO" then
+        -- The one choke point every share door funnels through (Library button,
+        -- shift-clicks, /kg export, Comm answers): a guild best is not yours to
+        -- re-export under your name, and the cache re-serves it live anyway.
+        return nil, "Raider.IO ghosts can't be shared"
+    end
     local db = KG.db
     local shareName = db.shareRouteName ~= false
     local route = db.shareRouteData ~= false and run.routeHash
@@ -397,19 +587,28 @@ function G:ExportString(mapID, level, charKey, tier)
 end
 
 --- Build the ghost reference for a live run: pinned ghost (Library pin / import
---- auto-pick) → own recorded run (exact level → highest below → lowest above) →
---- RaiderIO replay → season best (linear) → par (linear). Every reference carries
+--- auto-pick) → dungeon-wide Raider.IO pin → own recorded run (exact level →
+--- highest below → lowest above) → Raider.IO ghost (fresh convert → stored cache
+--- → live mirror) → season best (linear) → par (linear). Every reference carries
 --- `snapshots` so the bar and delta math treat all kinds uniformly. Depleted
 --- (tier 0) runs are recorded but NEVER raced (Fredrik 2026-07-19) — the +1
 --- sweeper is the deplete pressure. A pinned reference races PINNED
 --- (`startPinned` — auto-Overtakes blocked until unpinned in-race), the Ghost
---- Library's "races when you run <dungeon> +<level>" contract.
+--- Library's "races when you run <dungeon> +<level>" contract. Precedence when
+--- pins coexist: the map:level pick wins at its level (specific beats general),
+--- the rio pin everywhere else.
 function G:BuildReference(mapID, level)
     local pick = level and KG.db.pick[mapID .. ":" .. level]
 
     if type(pick) == "table" and pick.char then -- pinned ghost (a tier-0 PIN is legal:
         -- the Library's deliberate-override loosening, 2026-07-21 — only the
         -- automatic fallbacks below stay timed-only)
+        if pick.char == KG.RIO_CHAR then -- unreachable by construction (rio pins
+            -- live on the :rio key), but a hand-edited SavedVariables must not
+            -- dress the Raider.IO ghost as an import
+            local rioRef = G:BuildRioRef(mapID, true)
+            if rioRef then return rioRef end
+        end
         local byMap = KG.db.runs[pick.char]
         local tiers = byMap and byMap[mapID] and byMap[mapID][level]
         local run = tiers and ((pick.tier and tiers[pick.tier]) or M.BestRun(tiers, 1))
@@ -431,6 +630,14 @@ function G:BuildReference(mapID, level)
                 durationSec = run.durationSec,
             }
         end
+    end
+
+    -- The dungeon-wide Raider.IO pin (Fredrik 2026-07-21): races ANY level of this
+    -- dungeon, even over own ghosts — that is what pinning it MEANS. Falls through
+    -- silently on total failure, same as a missing pinned run above.
+    if KG.db.pick[mapID .. ":rio"] then
+        local rioRef = G:BuildRioRef(mapID, true)
+        if rioRef then return rioRef end
     end
 
     local _, byLevel = RunsFor(KG.CharacterKey(), mapID, level or -1, false)
@@ -460,7 +667,7 @@ function G:BuildReference(mapID, level)
         end
     end
 
-    local rio = G:BuildRioReference()
+    local rio = G:BuildRioRef(mapID)
     if rio then return rio end
 
     local best = S:GetSeasonBestSec(mapID)
@@ -491,6 +698,12 @@ end
 --- finish photo, knockback baseline) treats a switched-onto ghost identically.
 function G:RefForRun(run)
     if not run or not run.snapshots then return nil end
+    if run.legacy == "RIO" then
+        -- Manual switch-to IS allowed (S12 kept 2026-07-21: autos never target the
+        -- Raider.IO ghost, a deliberate row click races it) — and the ref must
+        -- read as the replay, not as "Your +26" or an import.
+        return { kind = "rio", label = RioLabel(run), run = run, durationSec = run.durationSec }
+    end
     local lvl = run.level and (" +" .. run.level) or ""
     if run.importedFrom then
         return {
@@ -512,18 +725,21 @@ end
 --- STABLE priority order that does NOT depend on which ghost is raced (Fredrik
 --- 2026-07-20, Live Test 1: a switch or pin must never reorder the rows — the
 --- highlight moves, the list stays; the raced ghost is simply one of the rows).
---- Priority chain (Fredrik 2026-07-19):
+--- Priority chain (Fredrik 2026-07-19; 5 added 2026-07-21):
 ---   1. imported ghosts at this (dungeon, level)
 ---   2. this character's timed runs at this level
 ---   3. this character's timed runs one/two levels below, then above
 ---   4. other own characters' timed runs at this level, then ±1
+---   5. the Raider.IO ghost — always last ("RaiderIO is always last prio",
+---      Fredrik 2026-07-21), tier 0 included (the replay RaiderIO chose to track
+---      is its own representation; never-race-depleted governs the OWN chain)
 --- Depleted runs never race — not as fillers either (Fredrik 2026-07-19).
 --- Within equal priority, runs recorded on `wantRoute` — YOUR selected MDT route
 --- this key, which is stable for the whole run unlike the raced ghost — win the
 --- tie (routeName tiebreak; the full route-aware priority tree stays an open
 --- design question in DESIGN.md).
---- RaiderIO's replay can't be a roster row: it exists only as the live raced
---- reference (the Roster Panel prepends it while it is raced).
+--- (The LIVE-MIRROR rio ref still can't be a roster row — no stored run; the
+--- Roster Panel prepends it while raced. The converted ghost is a normal row.)
 function G:BuildRoster(mapID, level, wantRoute)
     if not level then return {} end -- key level unreadable (secret flicker): no roster, no crash
     local target = KG.db.rosterSize or 3
@@ -551,7 +767,7 @@ function G:BuildRoster(mapID, level, wantRoute)
 
     local db = KG.db
     for charKey, byMap in pairs(db.runs) do -- 1. imports at this level (timed only)
-        local tiers = byMap[mapID] and byMap[mapID][level]
+        local tiers = charKey ~= KG.RIO_CHAR and byMap[mapID] and byMap[mapID][level]
         if tiers then
             for tier = KG.MAX_TIER, 1, -1 do
                 local run = tiers[tier]
@@ -568,7 +784,7 @@ function G:BuildRoster(mapID, level, wantRoute)
     end
 
     for charKey, byMap in pairs(db.runs) do -- 4. own alts (non-imported foreign charKeys)
-        if charKey ~= myKey and #out < target then
+        if charKey ~= myKey and charKey ~= KG.RIO_CHAR and #out < target then
             local m = byMap[mapID]
             if m then
                 for _, lvl in ipairs({ level, level - 1, level + 1 }) do
@@ -584,6 +800,11 @@ function G:BuildRoster(mapID, level, wantRoute)
                 end
             end
         end
+    end
+
+    if #out < target then -- 5. the Raider.IO ghost, always last (tier 0 included)
+        local rio = G:GetStoredRioRun(mapID)
+        if rio then add(rio, "RIO") end
     end
 
     return out

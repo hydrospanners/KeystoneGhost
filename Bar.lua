@@ -45,13 +45,17 @@ local test = {}
 --- the synthetic ghost only when nothing is stored.
 local function RealTestData()
     local byMap = {}
-    for _, maps in pairs(KG.db.runs) do
-        for mapID, byLevel in pairs(maps) do
-            for _, tiers in pairs(byLevel) do
-                for _, run in pairs(tiers) do
-                    if run.snapshots and #run.snapshots >= 3 and run.durationSec and run.total then
-                        byMap[mapID] = byMap[mapID] or {}
-                        table.insert(byMap[mapID], run)
+    for charKey, maps in pairs(KG.db.runs) do
+        -- The Raider.IO cache is not YOUR data: a banked guild best must never
+        -- masquerade as "Test: your +2 ghost" (it gets its own demo loop).
+        if charKey ~= KG.RIO_CHAR then
+            for mapID, byLevel in pairs(maps) do
+                for _, tiers in pairs(byLevel) do
+                    for _, run in pairs(tiers) do
+                        if run.snapshots and #run.snapshots >= 3 and run.durationSec and run.total then
+                            byMap[mapID] = byMap[mapID] or {}
+                            table.insert(byMap[mapID], run)
+                        end
                     end
                 end
             end
@@ -87,34 +91,16 @@ local function CopyScaled(base, f, chests, importedFrom)
     }
 end
 
---- Demo mirror for the RaiderIO-only loop: the same honest semantics as the live
---- mirror (Ghosts:UpdateRioMirror) driven by the base run instead of the RaiderIO
---- API — the replay's data ARRIVES as the demo clock passes it, so skulls pop the
---- moment the mirror watches a kill and never before (the first-run look, exactly).
-local function UpdateDemoRioMirror(ref, base, t)
-    local count = math.floor(M.SampleAt(base.snapshots, t) + 0.5)
-    local run = ref.run
-    for i = #run.bossKills + 1, #(base.bossKills or {}) do
-        local bk = base.bossKills[i]
-        if t < bk then break end
-        run.bossKills[i] = bk
-        run.bossCounts[i] = math.floor(M.SampleAt(base.snapshots, bk) + 0.5)
-        run.bossNames[i] = base.bossNames and base.bossNames[i] or nil
-    end
-    ref.nowCount = count
-    ref.nowBosses = #run.bossKills
-    -- Same change-only nodes as the live mirror (the demo's whole contract).
-    M.AppendStepNode(run.snapshots, t, count, ref.nowBosses)
-end
-
 --- One demo loop's cast, ALTERNATING scenarios per loop (Fredrik 2026-07-20 — the
 --- test runs again and again, so every other loop is the first-run look):
 ---   odd loops, "real" — the fastest stored ghost raced + the manufactured Rival
 ---   (0.65× the raced time: outpaces the sim player, clears the real No-Switch
 ---   Buffer Zone, OVERTAKES about a fifth in — S10's excluded-actor case) + up to
 ---   two more stored ghosts in the roster.
----   even loops, "rio" — ONLY a simulated RaiderIO replay, full mirror semantics:
----   the RaiderIO-only first experience, reviewable on repeat without a key.
+---   even loops, "rio" — ONLY a converted-style Raider.IO ghost (first-class
+---   replay, 2026-07-21: full curve from 0:00, skulls placed upfront, identity
+---   laps — what a first-run user actually sees; the old loop simulated the tick
+---   MIRROR, which is now the degraded fallback only, not the demo).
 --- Edit Mode preview pins "real" and stays silent — positioning is not testing.
 local function SeedTestSwitch()
     if KG.testMode then
@@ -125,29 +111,28 @@ local function SeedTestSwitch()
     end
     if test.scenario == "rio" then
         local base = test.run
+        local g = CopyScaled(base, 1, base.chests)
+        g.legacy, g.rioSource = "RIO", "guild best"
+        g.bossIDs, g.bossJIDs = base.bossIDs, base.bossJIDs -- identity travels (by
+        g.routeName = nil -- reference, like bossNames); converted runs carry no route
         test.rioRef = {
-            kind = "rio", live = true,
-            label = string.format("RaiderIO replay (%s)", M.FormatClock(base.durationSec or 0)),
-            durationSec = base.durationSec, rioTotal = base.total,
-            nowCount = 0, nowBosses = 0, mirrorFrom = 0,
-            nBosses = #(base.bossKills or {}),
-            run = { durationSec = base.durationSec, total = base.total,
-                snapshots = { { 0, 0, 0 } }, bossKills = {}, bossNames = {}, bossCounts = {} },
+            kind = "rio",
+            label = string.format("RaiderIO guild best +%d (%s)", g.level or 0,
+                M.FormatClock(g.durationSec or 0)),
+            durationSec = g.durationSec,
+            run = g,
         }
-        -- The sim player's own timeline as a run-shape: LiveDelta's you're-ahead
-        -- branch inverts YOUR curve, and the sim rides the base at t*1.12+25 — so
-        -- hand it the base curve mapped into sim-player time.
-        local ss, kk = {}, {}
+        -- The sim player's own timeline as a run-shape (the tombstone Death
+        -- Markers place on it): the sim rides the base at t*1.12+25, so hand it
+        -- the base curve mapped into sim-player time.
+        local ss = {}
         for i, s in ipairs(base.snapshots) do
             ss[i] = { math.max(0, (s[1] - 25) / 1.12), s[2], s[3] }
         end
-        for i, bk in ipairs(base.bossKills or {}) do
-            kk[i] = math.max(0, (bk - 25) / 1.12)
-        end
-        test.simRun = { snapshots = ss, bossKills = kk, total = base.total }
+        test.simRun = { snapshots = ss, total = base.total }
         test.ov = nil
         test.attached = nil
-        print("|cff88ccffKeystoneGhost|r: test loop — RaiderIO replay only (the first-run look).")
+        print("|cff88ccffKeystoneGhost|r: test loop — Raider.IO ghost only (the first-run look).")
     else
         test.rioRef = nil
         test.simRun = nil
@@ -255,16 +240,16 @@ local function TestState()
         dT = dT + 30
     end
 
-    -- Even loops race ONLY the simulated replay (SeedTestSwitch alternates): the
-    -- mirror grows with the sim clock, no Rival, no fillers, no Switch — the bar
-    -- exactly as a first-run user with zero stored ghosts sees it.
+    -- Even loops race ONLY the Raider.IO ghost (SeedTestSwitch alternates): a
+    -- complete converted-style run — full curve, upfront skulls, identity laps —
+    -- no Rival, no fillers, no Switch; the bar exactly as a first-run user with
+    -- zero stored ghosts sees it.
     if test.scenario == "rio" and test.rioRef then
-        UpdateDemoRioMirror(test.rioRef, test.run, elapsed)
         return {
             elapsed = elapsed, pct = pct, bosses = bosses, liveKills = liveKills, par = test.par,
             liveNames = test.run.bossNames, liveCounts = test.run.bossCounts,
             raw = raw, total = total, route = test.route,
-            liveRun = test.simRun, -- the sim player's own curve: LiveDelta's ahead-branch input
+            liveRun = test.simRun, -- the sim player's own curve: the Death Markers place on it
             deathCount = deaths, deathTimeLost = deaths * 15, deaths = simDeaths,
             ref = test.rioRef,
             roster = { { run = test.rioRef.run, tag = "RIO" } },
@@ -541,7 +526,28 @@ local function Runner(i, colorIdx)
     return f
 end
 
+--- The RaiderIO logo texture path, or nil (pulled from their TOC metadata so we
+--- never hardcode their asset path). Shared by the raced badge and runner icons.
+local function RaiderIOLogo()
+    if not (C_AddOns and C_AddOns.GetAddOnMetadata) then return nil end
+    local ok, icon = pcall(C_AddOns.GetAddOnMetadata, "RaiderIO", "IconTexture")
+    return (ok and type(icon) == "string" and icon ~= "") and icon or nil
+end
+
 local function ApplyRunnerIcon(tex, run)
+    if run.legacy == "RIO" then -- the Raider.IO ghost as a roster row/runner
+        local logo = RaiderIOLogo()
+        if logo then
+            tex:SetTexture(logo)
+            tex:SetTexCoord(0, 1, 0, 1)
+            return
+        end
+        -- logo unreadable (RaiderIO uninstalled, cached ghost racing): the watch —
+        -- NEVER the player-class fallback below, that claims the run is yours
+        tex:SetTexture("Interface\\Icons\\INV_Misc_PocketWatch_01")
+        tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        return
+    end
     local token = (run.importedFrom and run.importedFrom:match("%-([^%-]+)$"))
         or select(2, UnitClass("player"))
     local coords = token and _G.CLASS_ICON_TCOORDS and _G.CLASS_ICON_TCOORDS[token]
@@ -590,12 +596,11 @@ local function ApplyGhostIcon(iconTex, ref)
         return
     end
 
-    -- RaiderIO replay ghost wears the RaiderIO logo (pulled from their TOC metadata so
-    -- we never hardcode their asset path); watch as fallback for it and pace ghosts.
-    if ref.kind == "rio" and C_AddOns and C_AddOns.GetAddOnMetadata then
-        local ok, icon = pcall(C_AddOns.GetAddOnMetadata, "RaiderIO", "IconTexture")
-        if ok and type(icon) == "string" and icon ~= "" then
-            iconTex:SetTexture(icon)
+    -- RaiderIO ghost wears the RaiderIO logo; watch as fallback for it and pace ghosts.
+    if ref.kind == "rio" then
+        local logo = RaiderIOLogo()
+        if logo then
+            iconTex:SetTexture(logo)
             iconTex:SetTexCoord(0, 1, 0, 1)
             iconTex:SetVertexColor(1, 1, 1)
             return
@@ -1204,6 +1209,10 @@ function Bar:Update()
             M.FormatClock(st.elapsed),
             M.FormatForcesLevel(ghostCountNow, gTotal, countMode, 1), ghostBossesNow, nKills),
     }
+    if ref.kind == "rio" and ref.run and ref.run.legacy == "RIO" then
+        table.insert(frame.ghostHover.tip,
+            "Converted Raider.IO " .. (ref.run.rioSource or "replay") .. " — clock honest to ±3 s")
+    end
     if ref.run and ref.run.routeName then
         local line = "Route: " .. ref.run.routeName
         local rd = ref.run.routeHash and KG.Ghosts:RouteForHash(ref.run.routeHash)

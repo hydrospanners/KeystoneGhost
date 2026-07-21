@@ -140,7 +140,12 @@ local function RowTip(row)
         local cluster = ClusterLine(run)
         if cluster then tip[#tip + 1] = cluster end
     end
-    if row.pinned then
+    if row.charKey == KG.RIO_CHAR then
+        -- The Raider.IO pin is DUNGEON-WIDE ("unless I pin it", 2026-07-21): honest
+        -- copy, since every other row pins per (dungeon, level).
+        tip[#tip + 1] = row.pinned and "Click: unpin (back to the automatic pick)"
+            or string.format("Click: pin — races when you run %s (any key level)", row.groupName)
+    elseif row.pinned then
         tip[#tip + 1] = "Click: unpin (back to the automatic pick)"
     else
         tip[#tip + 1] = string.format("Click: pin — races when you run %s +%d%s",
@@ -304,6 +309,10 @@ local function AcquireRow(i)
         local r = self.row
         if button ~= "LeftButton" or not r then return end
         if IsShiftKeyDown() and KG.Comm then
+            if r.charKey == KG.RIO_CHAR then
+                print("|cff88ccffKeystoneGhost|r: Raider.IO ghosts can't be shared.")
+                return
+            end
             local pretty = string.format("%s +%d (%s)", r.groupName, r.level,
                 M.FormatClock(r.run.durationSec or 0))
             KG.Comm.InsertShareLink(r.charKey, r.mapID, r.level, r.tier, pretty)
@@ -332,8 +341,10 @@ local function AcquireRow(i)
         GameTooltip:SetText(tip[1])
         for i = 2, #tip do GameTooltip:AddLine(tip[i], 0.9, 0.9, 0.9) end
         if self.row.pinned then
-            GameTooltip:AddLine(string.format("Races when you run %s +%d",
-                self.row.groupName, self.row.level), GOLD[1], GOLD[2], GOLD[3])
+            GameTooltip:AddLine(self.row.charKey == KG.RIO_CHAR
+                and string.format("Races when you run %s (any key level)", self.row.groupName)
+                or string.format("Races when you run %s +%d",
+                    self.row.groupName, self.row.level), GOLD[1], GOLD[2], GOLD[3])
         end
         GameTooltip:Show()
     end)
@@ -475,6 +486,9 @@ end
 --- widgets hide. Called on show and after every pin/delete/import action.
 function Library:Refresh()
     if not frame or not frame:IsShown() then return end
+    -- Opportunistic cache-on-sight: browsing the Library inside a dungeon banks
+    -- the current replay. Self-gating outside; only re-refreshes on real change.
+    KG.Ghosts:CacheRioOnSight()
     local S = KG.Scenario
     local groups = M.LibraryModel(KG.db.runs, KG.db.pick, function(mapID)
         return S:GetMapName(mapID)
@@ -535,7 +549,10 @@ function Library:Refresh()
                 row.edge:Hide()
                 row.bg:Hide()
             end
-            row.share:SetShown(not depleted)
+            -- Raider.IO rows: share hidden (not yours to re-export — the codec
+            -- refuses anyway); DELETE stays — it is the cache-eviction door, and
+            -- the row honestly resurrects on next sight while RaiderIO serves it.
+            row.share:SetShown(not depleted and r.charKey ~= KG.RIO_CHAR)
             row:Show()
             y = y + ROW_H
         end
