@@ -229,6 +229,12 @@ function M.CleanRun(raw)
         routeHash = tonumber(raw.routeHash), -- Route Store reference (content hash)
         legacy = type(raw.legacy) == "string" and raw.legacy:sub(1, 12) or nil,
                  -- legacy-grade marker ("KPG1": bosses-only, saturated count)
+        -- Raider.IO ghost identity (first-class replay, 2026-07-21): the resolved
+        -- source word ("guild best"…) and their keystone_run_id — cache identity +
+        -- the mid-run replay-switch check. Survive the gate on any run but are
+        -- display-only / rio-scoped: spoofing them via an import earns no privilege.
+        rioSource = type(raw.rioSource) == "string" and raw.rioSource:sub(1, 20) or nil,
+        rioRunId = tonumber(raw.rioRunId),
         snapshots = snaps,
     }
     local chests = tonumber(raw.chests) or 0
@@ -644,7 +650,9 @@ end
 --- raceable rows first (level desc, tier desc, faster first), Depleted (tier 0)
 --- sink to the bottom — the top of every group stays scannable for ghosts that
 --- can actually race. `pick` = db.pick; a row whose (char, tier) matches the
---- pick at its (mapID, level) is flagged `pinned`.
+--- pick at its (mapID, level) is flagged `pinned`. Raider.IO rows (the
+--- KG.RIO_CHAR bucket) pin DUNGEON-WIDE instead: their flag reads the
+--- level-independent `mapID .. ":rio"` pick key (first-class replay, 2026-07-21).
 function M.LibraryModel(runs, pick, nameFor)
     local groups, byMap = {}, {}
     for charKey, maps in pairs(runs or {}) do
@@ -659,10 +667,16 @@ function M.LibraryModel(runs, pick, nameFor)
                             byMap[mapID] = g
                             groups[#groups + 1] = g
                         end
-                        local p = pick and pick[mapID .. ":" .. level]
+                        local pinned
+                        if charKey == KG.RIO_CHAR then
+                            pinned = (pick and pick[mapID .. ":rio"]) ~= nil
+                        else
+                            local p = pick and pick[mapID .. ":" .. level]
+                            pinned = (type(p) == "table" and p.char == charKey and p.tier == tier) or false
+                        end
                         g.rows[#g.rows + 1] = {
                             charKey = charKey, mapID = mapID, level = level, tier = tier, run = run,
-                            pinned = (type(p) == "table" and p.char == charKey and p.tier == tier) or false,
+                            pinned = pinned,
                         }
                     end
                 end
@@ -734,6 +748,9 @@ function M.ConvertRioReplay(replay, opts)
         return nil, "replay is missing level/time/forces"
     end
     if not mapID then return nil, "caller must resolve mapID" end
+    -- ≤4000 events can emit up to ~2× step nodes, past CleanRun's 5000-snapshot
+    -- cap — a pathological replay converts then cleans to nil and the caller
+    -- falls back to the live mirror. Graceful by construction, so no tighter gate.
     if #replay.events == 0 or #replay.events > 4000 then return nil, "unusable event count" end
 
     local penalty = (level >= 12 and 15) or (level >= 4 and 5) or 0
@@ -776,11 +793,14 @@ function M.ConvertRioReplay(replay, opts)
                 cum = newCum
             end
         elseif kind == 1 then
-            local n = math.max(1, tonumber(ev[3]) or 1)
+            -- Per-event cap + total bail: a garbage delta must not spin the loop —
+            -- CleanRun would reject >300 deaths anyway, so converting on is waste.
+            local n = math.min(40, math.max(1, tonumber(ev[3]) or 1))
             for _ = 1, n do
                 deaths = deaths + 1
                 deathList[#deathList + 1] = { t, deaths }
             end
+            if deaths > 300 then return nil, "implausible death count" end
         elseif kind == 3 then
             local ord = tonumber(ev[3])
             if ord then lastEngage[ord] = t end
