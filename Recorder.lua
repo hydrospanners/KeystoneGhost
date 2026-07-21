@@ -301,7 +301,10 @@ function R:EvaluateSwitch(t)
     local you = M.CoursePos(rec.lastPct, rec.bossKills and #rec.bossKills or 0, nBosses)
     local runners = {}
     for _, e in ipairs(roster) do
-        if e.run ~= ref.run and e.run.snapshots then
+        -- The Raider.IO ghost is never an AUTO-Overtake candidate (S12 kept,
+        -- Fredrik 2026-07-21): switched away from, and manually raced by row
+        -- click — but autos never target it.
+        if e.run ~= ref.run and e.run.snapshots and e.run.legacy ~= "RIO" then
             local course = M.CourseAt(e.run, t, nBosses)
             runners[#runners + 1] = { id = e.run, course = course, parked = course >= 1 }
         end
@@ -487,18 +490,57 @@ function R:OnTick()
         Capture()
     end
 
-    -- Live RaiderIO replay ghost: mirror its progress; and if the key started with a
-    -- linear fallback because the replay wasn't ready yet, upgrade within the first
-    -- minute (RaiderIO initializes its replay after CHALLENGE_MODE_START).
+    -- The Raider.IO ghost's three tick arms (first-class replay, 2026-07-21):
+    --   1. live MIRROR raced (degraded path): keep mirroring; and while the first
+    --      minute lasts, keep trying the FULL convert — RaiderIO initializes its
+    --      provider around key start, so the upgrade usually lands in seconds.
+    --      The S7 lastSwitch crossfade announces it; startPinned carries over.
+    --   2. converted rio ghost raced: every RECONCILE_INTERVAL, peek at the
+    --      provider — the player can flip replays in RaiderIO's own dropdown
+    --      MID-RUN (verified in their source: applies instantly while playing).
+    --      A different keystone_run_id rebuilds ghost + ref + Overtake in one
+    --      tick (no window where the bar reads a wiped run). An unreachable
+    --      provider is NOT a change: the stored ghost keeps racing.
+    --      Polling only while a rio ref is RACED — replacing a non-raced roster
+    --      row's run mid-run would perturb the stable order for nothing.
+    --   3. linear fallback raced (season/par): first-minute upgrade to the rio
+    --      slot, full-first (BuildRioRef: convert → cache → mirror).
     local ref = R.currentRef
     if ref and ref.live then
         KG.Ghosts:UpdateRioMirror(ref, t)
+        if t < 60 then
+            local run = KG.Ghosts:BuildRioGhost(rec.mapID)
+            if run then
+                local newRef = KG.Ghosts:RefForRun(run)
+                if newRef then
+                    newRef.startPinned = ref.startPinned
+                    R.currentRef = newRef
+                    overtake = KG.Overtake.New(run, ref.startPinned == true)
+                    R.lastSwitch = { at = GetTime(), run = run }
+                end
+            end
+        end
+    elseif ref and ref.kind == "rio" then
+        if now - (rec.lastRioCheck or 0) >= RECONCILE_INTERVAL then
+            rec.lastRioCheck = now
+            local run = KG.Ghosts:BuildRioGhost(rec.mapID)
+            if run and run ~= ref.run then -- same replay returns the SAME stored table
+                local newRef = KG.Ghosts:RefForRun(run)
+                if newRef then
+                    newRef.startPinned = ref.startPinned
+                    R.currentRef = newRef
+                    overtake = KG.Overtake.New(run, ref.startPinned == true)
+                    R.lastSwitch = { at = GetTime(), run = run }
+                end
+            end
+        end
     elseif t < 60 and ref and (ref.kind == "season" or ref.kind == "par") then
-        local rio = KG.Ghosts:BuildRioReference()
+        local rio = KG.Ghosts:BuildRioRef(rec.mapID)
         if rio then
             R.currentRef = rio
-            -- Upgrading to the replay re-seats the Overtake core too (the replay can
-            -- be switched AWAY from, never TO — S12's standing constraint).
+            -- Upgrading to the replay re-seats the Overtake core too (autos still
+            -- never switch TO it — S12 kept 2026-07-21; an automatic upgrade from
+            -- a linear ghost is never pinned).
             overtake = KG.Overtake.New(rio.run, false)
         end
     end
