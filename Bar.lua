@@ -103,11 +103,8 @@ local function UpdateDemoRioMirror(ref, base, t)
     end
     ref.nowCount = count
     ref.nowBosses = #run.bossKills
-    local snaps = run.snapshots
-    local last = snaps[#snaps]
-    if not last or t - last[1] >= 2 then
-        snaps[#snaps + 1] = { t, count, ref.nowBosses }
-    end
+    -- Same change-only nodes as the live mirror (the demo's whole contract).
+    M.AppendStepNode(run.snapshots, t, count, ref.nowBosses)
 end
 
 --- One demo loop's cast, ALTERNATING scenarios per loop (Fredrik 2026-07-20 — the
