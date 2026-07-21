@@ -37,7 +37,8 @@ A race bar (optionally docked under the EllesmereUI M+ timer, styled to match):
 
 Below the bar, the **ghost roster**: up to 3 ghosts racing you in parallel (the raced
 one highlighted; filled by priority — imports at this level, then your runs at this
-level, near levels, your alts), each with a live `now` delta and speedrun-style boss
+level, near levels, your alts, the Raider.IO ghost last), each with a live `now`
+delta and speedrun-style boss
 laps (`B1 -0:12` = you killed boss 1 twelve seconds faster). Rows are clickable
 (switch/pin); a gold lock on the raced row means it's pinned.
 
@@ -56,8 +57,15 @@ laps (`B1 -0:12` = you killed boss 1 twelve seconds faster). Rows are clickable
    (character, dungeon, level); racing a new highest key falls back to your ghost one
    level below. Depleted runs are recorded but never raced — the red +1 sweeper is
    the deplete pressure.
-3. **RaiderIO replay** — with RaiderIO's Replay module enabled, the replay it tracks
-   (guild best / your best) races you with real boss timestamps.
+3. **The Raider.IO ghost** — with RaiderIO's Replay module active, the replay it
+   tracks (guild best / your best) is converted into a full ghost the moment you
+   enter the dungeon — real forces curve, boss kills with identity, deaths — and
+   stored under a "Raider.IO" owner in the Ghost Library (one per dungeon, banked
+   as you play; refreshed whenever RaiderIO serves a newer replay). Unpinned it is
+   always the LAST pick — it races only when you have no ghost of your own. **Pin
+   it in the Library and it races ANY key level of that dungeon**, even over your
+   own ghosts. Not shareable; delete evicts the cache (the row returns on next
+   sight). If the full replay can't be read, a live tick-mirror races as fallback.
 4. **Season best / par pace** — linear ghosts so the bar is useful from day one.
 
 ## Commands
@@ -77,7 +85,8 @@ clamped to the screen, so a stale saved position can never strand it off-screen.
 ## Dependencies
 
 None required. Optional, detected at runtime: **EllesmereUI** (styling + docking),
-**RaiderIO** (replay ghosts), **MythicDungeonTools** (route name + pull indicator).
+**RaiderIO** (the Raider.IO ghost), **MythicDungeonTools** (route name + pull
+indicator).
 Bundled libs: LibStub, LibSerialize, LibDeflate, LibEditMode.
 
 ## Notes
@@ -104,5 +113,5 @@ Bundled libs: LibStub, LibSerialize, LibDeflate, LibEditMode.
   forces unevenly. Recorded and replay ghosts give honest count deltas.
 - Automatic switches are guarded against ping-pong: a challenger inside the buffer
   zone around your icon never triggers, the hold must be 3 s continuous, and the same
-  pair can't swap back within 20 s. The RaiderIO replay can be switched away from but
-  not (yet) to.
+  pair can't swap back within 20 s. Automatic switches never target the Raider.IO
+  ghost — clicking its roster row races it deliberately (and pins).
