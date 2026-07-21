@@ -268,7 +268,18 @@ function G:StoreRioGhost(run)
     if byMap and byMap[run.mapID] then
         for _, tiers in pairs(byMap[run.mapID]) do
             for _, old in pairs(tiers) do
-                if old.rioRunId and old.rioRunId == run.rioRunId then return old end
+                -- Same replay → the SAME table. keystone_run_id when present; an
+                -- id-less replay (off-spec but cheap to survive) dedupes on the
+                -- (level, duration, date) triple — without this, every sight would
+                -- mint a new table and the raced-ghost identity check would
+                -- crossfade-rebuild the race every provider peek.
+                if (old.rioRunId and old.rioRunId == run.rioRunId)
+                    or (not old.rioRunId and not run.rioRunId
+                        and old.level == run.level
+                        and old.durationSec == run.durationSec
+                        and old.completedAt == run.completedAt) then
+                    return old
+                end
             end
         end
     end
