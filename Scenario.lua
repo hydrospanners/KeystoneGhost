@@ -106,6 +106,30 @@ function S:GetChallengeMapID()
     return nil
 end
 
+--- The challenge mapID of the dungeon the player is STANDING IN, readable
+--- during staging too (walked in, key not started — GetActiveChallengeMapID
+--- is nil until key start, RaiderIO's own staging comment confirms): active
+--- id when set, else an exact instance-name match against the season roster.
+--- Refusals over guesses: no match or TWO same-name maps (mega-dungeon wings
+--- share an instance) → nil, callers fall back to key start — a guessed
+--- mapID would poison the Raider.IO cache store.
+function S:GetStagingMapID()
+    local active = self:GetChallengeMapID()
+    if active then return active end
+    if not GetInstanceInfo then return nil end
+    local ok, name, instanceType = pcall(GetInstanceInfo)
+    if not ok or not canRead(name) or type(name) ~= "string" then return nil end
+    if not canRead(instanceType) or instanceType ~= "party" then return nil end
+    local found
+    for _, mapID in ipairs(self:GetSeasonMapIDs() or {}) do
+        if self:GetMapName(mapID) == name then
+            if found then return nil end
+            found = mapID
+        end
+    end
+    return found
+end
+
 function S:IsChallengeActive()
     local ok, active = pcall(C_ChallengeMode.IsChallengeModeActive)
     if ok then
@@ -139,6 +163,24 @@ function S:GetMapName(mapID)
     local ok, name = pcall(C_ChallengeMode.GetMapUIInfo, mapID)
     if not ok or not canRead(name) or type(name) ~= "string" then return nil end
     return name
+end
+
+--- The season's challenge map roster (array of mapIDs), nil when unreadable.
+--- Fuels the Library's every-dungeon listing; each id passes readNum so a
+--- secret-valued entry drops out rather than poisoning a group key.
+function S:GetSeasonMapIDs()
+    if not (C_ChallengeMode and C_ChallengeMode.GetMapTable) then return nil end
+    local ok, maps = pcall(C_ChallengeMode.GetMapTable)
+    if not ok or type(maps) ~= "table" then return nil end
+    local ids
+    for _, id in ipairs(maps) do
+        id = readNum(id)
+        if id and id > 0 then
+            ids = ids or {}
+            ids[#ids + 1] = id
+        end
+    end
+    return ids
 end
 
 function S:GetSeasonBestSec(mapID)
