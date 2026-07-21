@@ -29,6 +29,7 @@ local OWNER_W, ROUTE_W = COL.DEL - COL.OWNER - 6, COL.OWNER - COL.ROUTE - 8
 
 local GOLD = { 1, 0.82, 0.15 } -- the pin gold (Splits' lock tint)
 local TIER_COLOR = { [3] = Style.TICK3, [2] = Style.TICK2, [1] = Style.TICK1, [0] = Style.GRAY }
+local ROUTE_GRAY = { 0.63, 0.63, 0.66 } -- the route cell at rest; hover brightens (clickable cue)
 
 local frame -- the window; built lazily on first toggle
 
@@ -140,17 +141,14 @@ local function RowTip(row)
         local cluster = ClusterLine(run)
         if cluster then tip[#tip + 1] = cluster end
     end
-    if row.charKey == KG.RIO_CHAR then
-        -- The Raider.IO pin is DUNGEON-WIDE ("unless I pin it", 2026-07-21): honest
-        -- copy, since every other row pins per (dungeon, level).
-        tip[#tip + 1] = row.pinned and "Click: unpin (back to the automatic pick)"
-            or string.format("Click: pin — races when you run %s (any key level)", row.groupName)
-    elseif row.pinned then
+    -- Every pin is DUNGEON-WIDE and per character (Fredrik 2026-07-21: "you
+    -- might want to race against your +12 in a +20") — one copy for all rows.
+    if row.pinned then
         tip[#tip + 1] = "Click: unpin (back to the automatic pick)"
     else
-        tip[#tip + 1] = string.format("Click: pin — races when you run %s +%d%s",
-            row.groupName, row.level,
-            row.tier == 0 and " (a Depleted run races only by this pin)" or "")
+        tip[#tip + 1] = string.format("Click: pin — races when you run %s (any key level%s)",
+            row.groupName,
+            row.tier == 0 and "; a Depleted run races only by this pin" or "")
     end
     return tip
 end
@@ -242,12 +240,18 @@ local function AcquireRow(i)
         local rd = KG.Ghosts:RouteForHash(self.row.run.routeHash)
         if rd then KG.RequestRouteLoad(rd) end
     end)
-    -- The route cell sits on top of the row: forward hover so the tooltip never dies.
+    -- The route cell sits on top of the row: forward hover so the tooltip never
+    -- dies — and brighten the route name itself (the close ×'s hover idiom), so
+    -- a loadable route reads as clickable. Only a real route enables mouse on
+    -- this cell, so the cue can't lie; the row's own wash stays untouched
+    -- (Fredrik 2026-07-21: cue the buttons, don't change the row hover).
     row.route:SetScript("OnEnter", function(self)
+        self.text:SetTextColor(0.95, 0.95, 0.98)
         local f = self:GetParent()
         f:GetScript("OnEnter")(f)
     end)
     row.route:SetScript("OnLeave", function(self)
+        self.text:SetTextColor(ROUTE_GRAY[1], ROUTE_GRAY[2], ROUTE_GRAY[3])
         local f = self:GetParent()
         f:GetScript("OnLeave")(f)
     end)
@@ -341,10 +345,8 @@ local function AcquireRow(i)
         GameTooltip:SetText(tip[1])
         for i = 2, #tip do GameTooltip:AddLine(tip[i], 0.9, 0.9, 0.9) end
         if self.row.pinned then
-            GameTooltip:AddLine(self.row.charKey == KG.RIO_CHAR
-                and string.format("Races when you run %s (any key level)", self.row.groupName)
-                or string.format("Races when you run %s +%d",
-                    self.row.groupName, self.row.level), GOLD[1], GOLD[2], GOLD[3])
+            GameTooltip:AddLine(string.format("Races when you run %s (any key level)",
+                self.row.groupName), GOLD[1], GOLD[2], GOLD[3])
         end
         GameTooltip:Show()
     end)
@@ -490,7 +492,7 @@ function Library:Refresh()
     -- the current replay. Self-gating outside; only re-refreshes on real change.
     KG.Ghosts:CacheRioOnSight()
     local S = KG.Scenario
-    local groups = M.LibraryModel(KG.db.runs, KG.db.pick, function(mapID)
+    local groups = M.LibraryModel(KG.db.runs, KG.Ghosts:MyPicks(), function(mapID)
         return S:GetMapName(mapID)
     end)
 
@@ -528,7 +530,7 @@ function Library:Refresh()
             row.date:SetAlpha(a * 0.8)
             local routeName = r.run.routeName and M.Ellipsize(M.StripColors(r.run.routeName), 28) or "—"
             row.route.text:SetText(routeName)
-            row.route.text:SetTextColor(0.63, 0.63, 0.66)
+            row.route.text:SetTextColor(ROUTE_GRAY[1], ROUTE_GRAY[2], ROUTE_GRAY[3])
             row.route.text:SetAlpha(a)
             row.route:EnableMouse(KG.Ghosts:RouteForHash(r.run.routeHash) ~= nil)
             row.owner:SetText(OwnerText(r))

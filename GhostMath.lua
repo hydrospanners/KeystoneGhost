@@ -649,10 +649,10 @@ end
 --- file); groups sort by resolved name, "map N" fallback. Within a group:
 --- raceable rows first (level desc, tier desc, faster first), Depleted (tier 0)
 --- sink to the bottom — the top of every group stays scannable for ghosts that
---- can actually race. `pick` = db.pick; a row whose (char, tier) matches the
---- pick at its (mapID, level) is flagged `pinned`. Raider.IO rows (the
---- KG.RIO_CHAR bucket) pin DUNGEON-WIDE instead: their flag reads the
---- level-independent `mapID .. ":rio"` pick key (first-class replay, 2026-07-21).
+--- can actually race. `pick` = the VIEWING character's dungeon-keyed pick table
+--- (db.picks[me], may be nil): the one row matching pick[mapID] — char + level
+--- + tier; Raider.IO rows match on char alone — is flagged `pinned`. One
+--- selected row per dungeon, per character (Fredrik 2026-07-21).
 function M.LibraryModel(runs, pick, nameFor)
     local groups, byMap = {}, {}
     for charKey, maps in pairs(runs or {}) do
@@ -668,11 +668,12 @@ function M.LibraryModel(runs, pick, nameFor)
                             groups[#groups + 1] = g
                         end
                         local pinned
+                        local p = pick and pick[mapID]
                         if charKey == KG.RIO_CHAR then
-                            pinned = (pick and pick[mapID .. ":rio"]) ~= nil
+                            pinned = (type(p) == "table" and p.char == KG.RIO_CHAR) or false
                         else
-                            local p = pick and pick[mapID .. ":" .. level]
-                            pinned = (type(p) == "table" and p.char == charKey and p.tier == tier) or false
+                            pinned = (type(p) == "table" and p.char == charKey
+                                and p.level == level and p.tier == tier) or false
                         end
                         g.rows[#g.rows + 1] = {
                             charKey = charKey, mapID = mapID, level = level, tier = tier, run = run,
