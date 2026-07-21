@@ -4,6 +4,13 @@ All notable changes to Keystone Ghost are listed here.
 
 ## [Unreleased]
 
+- Ghost Library: one selected row per dungeon. Pinning a ghost now clears the
+  dungeon's previous pin — any key level, the Raider.IO row included — so two
+  rows can no longer sit highlighted in the same dungeon looking multi-selected.
+  Pins in other dungeons stay. Importing a ghost still auto-pins it, and that
+  also replaces the dungeon's previous pin now (a pinned Raider.IO ghost is the
+  one thing an import won't unseat, as before). Double-pins left over from
+  older versions collapse the first time you pin anything in that dungeon.
 - The Raider.IO ghost is now a real ghost, not a live mirror: the full replay
   (per-award forces log, boss kills with identity, deaths) is converted into a
   normal stored run the moment it is seen — skulls sit at their true spots from

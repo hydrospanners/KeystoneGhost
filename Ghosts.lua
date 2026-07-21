@@ -411,9 +411,25 @@ function G:GetOrMintShareTag()
     return db.shareTag
 end
 
+--- One selected row per dungeon (Fredrik's 2026-07-21 bug report: pinning a
+--- second level of the same dungeon left BOTH rows lit): sweep every pick the
+--- dungeon holds before a new one lands. Level picks and the `:rio` key all
+--- share the `mapID .. ":"` prefix. `keepRio` spares the rio pin — import
+--- auto-picks never clear that deliberate act, only another deliberate pin does.
+local function ClearDungeonPicks(pick, mapID, keepRio)
+    local prefix = mapID .. ":"
+    for k in pairs(pick) do
+        if k:sub(1, #prefix) == prefix and not (keepRio and k == prefix .. "rio") then
+            pick[k] = nil
+        end
+    end
+end
+
 --- Store an imported run under its exporter's character key and auto-pick it for racing
---- at that (dungeon, level) — importing exists to compete against the sender. `route`
---- (optional, already sanitized) lands in the Route Store; the run's routeHash is
+--- at that (dungeon, level) — importing exists to compete against the sender. The
+--- auto-pick claims the dungeon's one selection (any previous level pick sweeps;
+--- the rio pin alone survives, see ClearDungeonPicks). `route` (optional,
+--- already sanitized) lands in the Route Store; the run's routeHash is
 --- forced to OUR recomputed hash, never the sender's claim. `shareTag` (already
 --- sanitized by the codec) is stamped for the future Data-view's alt grouping.
 function G:StoreImport(run, exporter, route, shareTag)
@@ -430,6 +446,7 @@ function G:StoreImport(run, exporter, route, shareTag)
     db.runs[exporter][run.mapID] = db.runs[exporter][run.mapID] or {}
     db.runs[exporter][run.mapID][run.level] = db.runs[exporter][run.mapID][run.level] or {}
     M.InsertRun(db.runs[exporter][run.mapID][run.level], run)
+    ClearDungeonPicks(db.pick, run.mapID, true) -- keepRio: the auto-pick is not a deliberate act
     db.pick[run.mapID .. ":" .. run.level] = { char = exporter, tier = run.chests }
     db.lastImported = { char = exporter, mapID = run.mapID, level = run.level }
     G:SweepRoutes() -- InsertRun may have rejected the run: don't keep an orphan route
@@ -466,15 +483,19 @@ function G:DeleteRun(charKey, mapID, level, tier)
 end
 
 --- Toggle the Library pin for a run: pin = that exact run races when a matching
---- (dungeon, level) key starts (one pin per map:level — pinning elsewhere moves
---- it); unpin = back to the automatic chain. Depleted runs CAN pin (Fredrik
---- 2026-07-21, loosening the 2026-07-19 rule): the automatic chain still never
---- picks one, but an explicit pin is the player's deliberate override — "beat
---- my depleted attempt properly" is a real race. Returns the new pinned state.
+--- (dungeon, level) key starts (one pin per DUNGEON since the 2026-07-21 bug
+--- report — pinning ANY other row of the dungeon moves the selection there, so
+--- two rows can never sit lit together); unpin = back to the automatic chain.
+--- Depleted runs CAN pin (Fredrik 2026-07-21, loosening the 2026-07-19 rule):
+--- the automatic chain still never picks one, but an explicit pin is the
+--- player's deliberate override — "beat my depleted attempt properly" is a
+--- real race. Returns the new pinned state.
 --- The Raider.IO row pins DUNGEON-WIDE (Fredrik 2026-07-21: "unless I pin it"):
 --- one level-independent key, `mapID .. ":rio"` — the ghost races ANY key level
---- of that dungeon, even over own/imported ghosts. A later deliberate normal pin
---- clears it (the newer deliberate act wins); import auto-picks do NOT.
+--- of that dungeon, even over own/imported ghosts. Deliberate pins sweep each
+--- other in BOTH directions (the newer deliberate act wins); import auto-picks
+--- do NOT touch the rio pin. A pre-fix DB may still hold several picks in one
+--- dungeon — the first pin in that dungeon collapses them (self-healing).
 function G:TogglePin(charKey, mapID, level, tier)
     local db = KG.db
     if charKey == KG.RIO_CHAR then
@@ -483,6 +504,7 @@ function G:TogglePin(charKey, mapID, level, tier)
             db.pick[rk] = nil
             return false
         end
+        ClearDungeonPicks(db.pick, mapID)
         db.pick[rk] = { char = charKey }
         return true
     end
@@ -493,8 +515,8 @@ function G:TogglePin(charKey, mapID, level, tier)
         db.pick[pk] = nil
         return false
     end
+    ClearDungeonPicks(db.pick, mapID) -- rio included: a deliberate normal pin outranks it
     db.pick[pk] = { char = charKey, tier = tier }
-    db.pick[mapID .. ":rio"] = nil -- a deliberate normal pin outranks the rio pin
     return true
 end
 
