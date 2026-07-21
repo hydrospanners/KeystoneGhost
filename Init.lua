@@ -35,9 +35,13 @@ function KG.InitDB()
     if db.bounce == nil then db.bounce = true end -- walk-cycle hop on your icon
     db.runs = db.runs or {}   -- [charKey][mapID][level] = { [tier] = run } (one slot per chest tier)
     db.picks = db.picks or {} -- [pinnerCharKey][mapID] = { char, level, tier } — each
-                              -- character's ONE pick per dungeon (Library pin / import
-                              -- auto-pick; races any key level — per-character and
-                              -- dungeon-wide since 2026-07-21, Fredrik's Library reports)
+                              -- character's ONE pick per dungeon (Library pin; races any
+                              -- key level — per-character and dungeon-wide since
+                              -- 2026-07-21, Fredrik's Library reports)
+    db.importPick = db.importPick or {} -- [mapID] = { char, level, tier } — the ACCOUNT-WIDE
+                              -- import auto-pick layer under the per-character picks
+                              -- ("imports need to be visible for all characters"): races
+                              -- every character until their own pin shadows it
     db.pick = nil -- retired 2026-07-21: the account-global [map..":"..level] store —
                   -- per-level keys don't map onto the per-character dungeon-wide
                   -- model, so old pins reset once (re-pin from the Library)

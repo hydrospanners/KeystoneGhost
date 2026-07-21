@@ -10,9 +10,11 @@ All notable changes to Keystone Ghost are listed here.
   the selection there, clicking the pinned row unpins it, and two rows can no
   longer sit highlighted in one dungeon. Pins also stopped following the
   ghost's owner around: pinning your main's run while on an alt pins it for
-  the alt only. Imports still auto-pin themselves for whoever imported them
-  (a pinned Raider.IO ghost still outranks that). Pins from older versions
-  reset once on this update — re-pin from the Library.
+  the alt only. Importing a ghost auto-pins it for ALL your characters — that
+  ghost races whoever you play, a character's own pin (Raider.IO included)
+  outranks it for that character, and unpinning the import's row turns the
+  shared auto-pin off everywhere. Pins from older versions reset once on
+  this update — re-pin from the Library.
 - Ghost Library: the Route cell brightens on hover when a route can be
   clicked to load into MDT, so clickable reads as clickable. The row's own
   hover wash and the share/delete buttons' cues are unchanged.

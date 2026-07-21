@@ -492,7 +492,7 @@ function Library:Refresh()
     -- the current replay. Self-gating outside; only re-refreshes on real change.
     KG.Ghosts:CacheRioOnSight()
     local S = KG.Scenario
-    local groups = M.LibraryModel(KG.db.runs, KG.Ghosts:MyPicks(), function(mapID)
+    local groups = M.LibraryModel(KG.db.runs, KG.Ghosts:EffectivePicks(), function(mapID)
         return S:GetMapName(mapID)
     end)
 
