@@ -295,10 +295,12 @@ local function AcquireRow(i)
         end)
         return b
     end
-    -- The share glyph is the addon's own hourglass mark (Fredrik 2026-07-21:
-    -- "na use it" — no separate export icon; the art is full-color, so no
-    -- vertex tint). Hover still brightens via the ActionButton alpha.
-    row.share = ActionButton(COL.SHARE, "Interface\\AddOns\\KeystoneGhost\\minimap-icon.tga")
+    -- The share glyph: Fredrik's own arrow-out-of-tray (2026-07-21 upload,
+    -- superseding the brief hourglass stand-in) — a white silhouette with
+    -- luminance-alpha, so the accent vertex tint colors it and hover
+    -- brightens via the ActionButton alpha.
+    row.share = ActionButton(COL.SHARE, "Interface\\AddOns\\KeystoneGhost\\share-icon.tga")
+    row.share.tex:SetVertexColor(Style.GetAccent())
     row.share.tipText = "Share — copy this ghost's export string"
     row.share:SetScript("OnClick", function(self)
         local r = self.row
