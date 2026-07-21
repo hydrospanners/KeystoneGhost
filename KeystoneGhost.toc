@@ -2,7 +2,7 @@
 ## Title: Keystone Ghost
 ## Notes: Race a ghost of your best Mythic+ runs — at-a-glance time and count pace.
 ## Author: Hydrospanners
-## Version: 0.7.1
+## Version: 0.7.2
 ## Category: Dungeons & Raids
 ## IconTexture: Interface\AddOns\KeystoneGhost\minimap-icon.tga
 ## SavedVariables: KeystoneGhostDB
