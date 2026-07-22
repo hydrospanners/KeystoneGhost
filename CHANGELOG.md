@@ -2,6 +2,14 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.9.1] - 2026-07-22
+
+- Runs now record the account region ("EU", "US", …) alongside the rest of the
+  run context. Nothing changes in game: it exists so a shared ghost can be
+  turned into Raider.IO and Warcraft Logs profile links, which are region-first
+  and previously had no source for that field. The region travels with the run,
+  so re-sharing an imported ghost keeps the original party's region.
+
 ## [0.9.0] - 2026-07-21
 
 - Ghost Library pins reworked: one selected row per dungeon, per character.

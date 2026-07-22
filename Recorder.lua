@@ -141,6 +141,11 @@ function R:OnKeyStart()
     rec.player = S:GetPlayerContext()
     rec.season = S:GetSeasonID()
     rec.affixes = S:GetAffixIDs()
+    -- Region rides with the RUN, not the export envelope: re-sharing an import must
+    -- keep the ORIGINAL party's region (the exporter field is chain-of-custody, the
+    -- run's own player/party context travels unchanged). Feeds Raider.IO / Warcraft
+    -- Logs profile links, which are region-first.
+    rec.region = S:Region()
 
     -- Optional MDT context: route name (export metadata) + cumulative pull forces (the
     -- Pull Indicator). Both nil without MDT / non-matching preset.
