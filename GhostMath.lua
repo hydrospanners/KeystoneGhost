@@ -229,6 +229,12 @@ function M.CleanRun(raw)
         routeHash = tonumber(raw.routeHash), -- Route Store reference (content hash)
         legacy = type(raw.legacy) == "string" and raw.legacy:sub(1, 12) or nil,
                  -- legacy-grade marker ("KPG1": bosses-only, saturated count)
+        -- Account region token ("EU"/"US"/…) of the party that ran this key — there
+        -- is no cross-region play, so one token covers the whole roster. Letters
+        -- only, 2-4: it is an enum token that becomes a path segment in a Raider.IO
+        -- / Warcraft Logs URL at display, so a crafted string must never be able to
+        -- smuggle a slash, a scheme, or a pipe escape through this gate.
+        region = type(raw.region) == "string" and raw.region:upper():match("^%u%u%u?%u?$") or nil,
         -- Raider.IO ghost identity (first-class replay, 2026-07-21): the resolved
         -- source word ("guild best"…) and their keystone_run_id — cache identity +
         -- the mid-run replay-switch check. Survive the gate on any run but are

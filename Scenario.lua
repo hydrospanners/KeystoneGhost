@@ -246,6 +246,32 @@ function S:ServerNow()
     return time and time() or 0
 end
 
+--- Account region as Blizzard's token ("US"/"KR"/"EU"/"TW"/"CN"). Needed because
+--- Raider.IO and Warcraft Logs profile URLs are region-first
+--- (`/characters/{region}/{realm}/{name}`) and nothing else in the payload carries
+--- it. There is no cross-region play, so the recorder's region IS the whole party's
+--- region (Fredrik 2026-07-22). An enum token, not display text — same class as
+--- classFile and role under the "IDs in the data" rule. Name API first, numeric
+--- region id as fallback; nil when neither is readable.
+local REGION_BY_ID = { "US", "KR", "EU", "TW", "CN" }
+
+function S:Region()
+    if GetCurrentRegionName then
+        local ok, name = pcall(GetCurrentRegionName)
+        if ok and canRead(name) and type(name) == "string" and name ~= "" then
+            return name:upper():sub(1, 4)
+        end
+    end
+    if GetCurrentRegion then
+        local ok, id = pcall(GetCurrentRegion)
+        if ok then
+            local token = REGION_BY_ID[readNum(id) or 0]
+            if token then return token end
+        end
+    end
+    return nil
+end
+
 --- Exporter context captured at KEY START (payload expansion — spec/guild/level
 --- change later; history must not rewrite). Every field best-effort: unreadable
 --- simply means absent. APIs verified 2026-07-20 (Blizzard docs live + BigWigs/
