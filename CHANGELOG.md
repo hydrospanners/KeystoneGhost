@@ -2,6 +2,10 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.9.2] - 2026-07-22
+
+- Marked compatible with 12.1 alongside 12.0.7. Support for 12.0.5 is dropped.
+
 ## [0.9.1] - 2026-07-22
 
 - Runs now record the account region ("EU", "US", …) alongside the rest of the
