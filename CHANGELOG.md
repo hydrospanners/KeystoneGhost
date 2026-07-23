@@ -2,6 +2,29 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.10.0] - 2026-07-23
+
+- Ghosts now show their deaths. A tombstone stands on the ghost's own lane
+  where its run lost time, and clears away as the ghost reaches it. A stone
+  ahead of a rival is where that run is about to stumble. The ghost you're
+  racing wobbles when it gets there.
+- Your own tombstones moved up onto the track, into the same lane as the boss
+  skulls, and never sit on top of one. Several deaths in the same spot stack
+  into a small pile.
+- New setting, "Death markers", in the options panel: off, your deaths only,
+  or your deaths and the ghosts'. It only changes what gets drawn. No ghost
+  runs differently because of it.
+- You can now hide a ghost. Click the eye on its row in the Ghost Library and
+  it stops racing you: no roster row, no automatic pick. The row stays in the
+  Library, dimmed, so clicking the eye again brings it back. Pinning a hidden
+  ghost un-hides it, which is why pinned rows have no eye. Hiding is yours
+  alone. It never travels in a shared ghost.
+- New Edit Mode slider, "Ghost Roster size": how many ghosts race you at once,
+  0 to 4. Set it to 0 to leave just you and the one ghost you're racing.
+- The addon now shows nothing inside raid instances. A left-on `/kg test` demo
+  or an undismissed run summary no longer follows you in there. Everything
+  Mythic+ works exactly as before.
+
 ## [0.9.2] - 2026-07-22
 
 - Marked compatible with 12.1 alongside 12.0.7. Support for 12.0.5 is dropped.
