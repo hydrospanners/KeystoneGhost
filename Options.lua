@@ -112,6 +112,39 @@ function Options:Setup()
             "Swap the ahead/behind verdict colors for common color-vision deficiencies. Applies everywhere a red/green verdict shows — the Gap, the zone, roster deltas.")
     end
 
+    -- Death markers (Fredrik 2026-07-22). Panel, not Edit Mode, by his call and
+    -- the default rule (DESIGN "Settings architecture"): this picks WHOSE deaths
+    -- are drawn — scope, not pixels. Same dropdown shape as Color vision above.
+    -- Display-only: the ghosts' pace is untouched by it (their recorded clock
+    -- already carries the death penalty), so a mid-run change just redraws.
+    if Settings.CreateDropdown and Settings.CreateControlTextContainer then
+        local DM_ORDER = { "none", "yours", "all" }
+        local DM_LABEL = {
+            none = "Off",
+            yours = "Your deaths only",
+            all = "Your deaths and the ghosts'",
+        }
+        local function GetDeathMarkerOptions()
+            local container = Settings.CreateControlTextContainer()
+            for i, key in ipairs(DM_ORDER) do container:Add(i, DM_LABEL[key]) end
+            return container:GetData()
+        end
+        local dmSetting = Settings.RegisterProxySetting(category, "KEYSTONEGHOST_DEATH_MARKERS",
+            Settings.VarType.Number, "Death markers", 3,
+            function()
+                for i, key in ipairs(DM_ORDER) do
+                    if key == (KG.db.deathMarkers or "all") then return i end
+                end
+                return 3
+            end,
+            function(value)
+                KG.db.deathMarkers = DM_ORDER[value] or "all"
+                KG.Bar:Refresh()
+            end)
+        Settings.CreateDropdown(category, dmSetting, GetDeathMarkerOptions,
+            "Tombstones on the track. Yours stand where you died and stay. A ghost's stand on its own lane ahead of it and disappear as it reaches them — that's where its run lost time to the death penalty.")
+    end
+
     -- Forces readout (the count display toggle — Fredrik's own idea, 2026-07-20):
     -- checkbox ON = percent, the default (an on-by-default box asserts the norm);
     -- unticking switches every site to the raw count. Display-only — the race math

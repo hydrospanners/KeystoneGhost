@@ -62,6 +62,10 @@ function KG.InitDB()
     db.minimap = db.minimap or {} -- LibDBIcon state (hide/minimapPos/lock) — Ghost Library button
                             -- db.libPos (Library window position) stays nil until first drag
     db.colorVision = db.colorVision or "default" -- verdict palette (Options dropdown, 2026-07-21)
+    db.deathMarkers = db.deathMarkers or "all" -- tombstones: "none" | "yours" | "all"
+                            -- (Options dropdown, 2026-07-22). DISPLAY-ONLY: a ghost's pace
+                            -- never depends on this — its recorded clock already carries
+                            -- the penalty — so flipping it mid-run just redraws.
                             -- db.rosterSort stays nil until a header is clicked (Splits)
     db.countDisplay = nil -- stale key from the same-day default-count hour (never shipped)
     KG.db = db

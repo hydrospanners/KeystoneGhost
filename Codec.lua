@@ -188,11 +188,17 @@ end
 -- handles them fine and streams can't carry holes.
 local STREAMED = { snapshots = true, bossKills = true, bossCounts = true, deaths = true }
 
+--- Fields that live on the run table but are LOCAL preference, not run data:
+--- the receiver's CleanRun whitelist would drop them on arrival anyway, and
+--- stripping here keeps them out of the string too. `hidden` = the Ghost Library
+--- eye (2026-07-22) — my parked ghost is nobody else's parked ghost.
+local NEVER_SHARED = { hidden = true }
+
 --- Run table → wire shape: scalar fields as-is, heavy arrays as packed streams.
 local function PackRun(run)
     local out = {}
     for k, v in pairs(run) do
-        if not STREAMED[k] then out[k] = v end
+        if not STREAMED[k] and not NEVER_SHARED[k] then out[k] = v end
     end
     out.snapshotStream = PACK.packSnapshots(run.snapshots or {})
     out.bossKillStream = PACK.packList(run.bossKills)

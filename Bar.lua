@@ -82,8 +82,16 @@ local function CopyScaled(base, f, chests, importedFrom)
     local s2, k2 = {}, {}
     for i, s in ipairs(base.snapshots) do s2[i] = { s[1] * f, s[2], s[3] } end
     for i, k in ipairs(base.bossKills or {}) do k2[i] = k * f end
+    -- Deaths travel too, scaled onto the copy's clock, so the demo's ghosts wear
+    -- the tombstones their recording actually earned.
+    local d2
+    if base.deaths then
+        d2 = {}
+        for i, d in ipairs(base.deaths) do d2[i] = { d[1] * f, d[2] } end
+    end
     return {
-        snapshots = s2, bossKills = k2, durationSec = (base.durationSec or 0) * f,
+        snapshots = s2, bossKills = k2, deaths = d2, deathCount = d2 and #d2 or nil,
+        durationSec = (base.durationSec or 0) * f,
         total = base.total, -- same units as the base: the race compares exactly
         bossNames = base.bossNames, bossCounts = base.bossCounts, level = base.level or 12,
         chests = chests, routeName = base.routeName, importedFrom = importedFrom,
@@ -102,6 +110,46 @@ end
 ---   laps — what a first-run user actually sees; the old loop simulated the tick
 ---   MIRROR, which is now the degraded fallback only, not the demo).
 --- Edit Mode preview pins "real" and stays silent — positioning is not testing.
+--- The sim player's own timeline as a run-shape: the demo player rides the base
+--- curve at t*1.12+25, so invert that mapping. YOUR tombstones place on this —
+--- without it the whole graveyard would stand at the start line.
+local function SimRunOf(base)
+    local ss = {}
+    for i, s in ipairs(base.snapshots) do
+        ss[i] = { math.max(0, (s[1] - 25) / 1.12), s[2], s[3] }
+    end
+    return { snapshots = ss, total = base.total }
+end
+
+--- Demo deaths for a manufactured cast member whose base recording was clean —
+--- otherwise the ghost half of the Death Markers is invisible in `/kg test` for
+--- anyone whose real runs went well (Fredrik 2026-07-22: he raced the RIO loop
+--- and the only death glyphs on screen were his own). The sim player's deaths
+--- were always fabricated; this is the same trick on the other side. Real
+--- recordings are never touched — only CopyScaled results reach this.
+--- The STALL is injected with the stone: a real recording's clock jumps on a
+--- death (the penalty is baked in), so its ghost stands still at the grave. A
+--- demo that drew the stone alone would show a ghost strolling through it.
+local DEMO_PENALTY = 15
+local function EnsureDemoDeaths(run)
+    if run.deaths or not run.snapshots then return run end
+    local dur = run.durationSec or 1600
+    local deaths = {}
+    for i, frac in ipairs({ 0.42, 0.62, 0.82 }) do
+        local at = dur * frac + DEMO_PENALTY * (i - 1)
+        deaths[i] = { at, i }
+        for _, s in ipairs(run.snapshots) do
+            if s[1] > at then s[1] = s[1] + DEMO_PENALTY end
+        end
+        for k, bk in ipairs(run.bossKills or {}) do
+            if bk > at then run.bossKills[k] = bk + DEMO_PENALTY end
+        end
+    end
+    run.deaths, run.deathCount = deaths, #deaths
+    run.durationSec = dur + DEMO_PENALTY * #deaths
+    return run
+end
+
 local function SeedTestSwitch()
     if KG.testMode then
         test.loopN = (test.loopN or 0) + 1
@@ -111,7 +159,7 @@ local function SeedTestSwitch()
     end
     if test.scenario == "rio" then
         local base = test.run
-        local g = CopyScaled(base, 1, base.chests)
+        local g = EnsureDemoDeaths(CopyScaled(base, 1, base.chests))
         g.legacy, g.rioSource = "RIO", "guild best"
         g.bossIDs, g.bossJIDs = base.bossIDs, base.bossJIDs -- identity travels (by
         g.routeName = nil -- reference, like bossNames); converted runs carry no route
@@ -122,21 +170,14 @@ local function SeedTestSwitch()
             durationSec = g.durationSec,
             run = g,
         }
-        -- The sim player's own timeline as a run-shape (the tombstone Death
-        -- Markers place on it): the sim rides the base at t*1.12+25, so hand it
-        -- the base curve mapped into sim-player time.
-        local ss = {}
-        for i, s in ipairs(base.snapshots) do
-            ss[i] = { math.max(0, (s[1] - 25) / 1.12), s[2], s[3] }
-        end
-        test.simRun = { snapshots = ss, total = base.total }
+        test.simRun = SimRunOf(base)
         test.ov = nil
         test.attached = nil
         print("|cff88ccffKeystoneGhost|r: test loop — Raider.IO ghost only (the first-run look).")
     else
         test.rioRef = nil
-        test.simRun = nil
-        test.rival = CopyScaled(test.run, 0.65, 3)
+        test.simRun = SimRunOf(test.run)
+        test.rival = EnsureDemoDeaths(CopyScaled(test.run, 0.65, 3))
         test.ov = KG.Overtake.New(test.run, false)
         test.attached = test.run
         if KG.testMode then
@@ -302,6 +343,7 @@ local function TestState()
         elapsed = elapsed, pct = pct, bosses = bosses, liveKills = liveKills, par = test.par,
         liveNames = test.run.bossNames, liveCounts = test.run.bossCounts,
         raw = raw, total = total, route = test.route,
+        liveRun = test.simRun, -- the sim player's own curve: your tombstones place on it
         deathCount = deaths, deathTimeLost = deaths * 15, deaths = simDeaths,
         ref = { kind = "test", label = label, run = raced, durationSec = raced.durationSec },
         roster = roster,
@@ -430,6 +472,23 @@ local function Build()
     frame.ghostIcon:SetPoint("CENTER")
     frame.ghostIcon:SetTexture("Interface\\Icons\\INV_Misc_PocketWatch_01")
     frame.ghostIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    -- The ghost's own Dazed (Fredrik 2026-07-22, with the tombstones): when the
+    -- raced ghost reaches one of its deaths it wobbles, exactly like Mario does.
+    -- The wobble is the READABLE half of a ghost death — the costly half already
+    -- happens for free, because a recorded timeline stalls for the penalty (the
+    -- official clock jumps, so the recording carries it). No knockback for the
+    -- ghost: it never moved backwards down the road, it stood still, and paying
+    -- the same second twice would be a lie. Same recipe as frame.dazedAnim.
+    local gDazed = frame.ghostIcon:CreateAnimationGroup()
+    gDazed:SetLooping("REPEAT")
+    local g1 = gDazed:CreateAnimation("Rotation")
+    g1:SetDegrees(6); g1:SetDuration(0.12); g1:SetOrder(1); g1:SetSmoothing("IN_OUT")
+    local g2 = gDazed:CreateAnimation("Rotation")
+    g2:SetDegrees(-12); g2:SetDuration(0.24); g2:SetOrder(2); g2:SetSmoothing("IN_OUT")
+    local g3 = gDazed:CreateAnimation("Rotation")
+    g3:SetDegrees(6); g3:SetDuration(0.12); g3:SetOrder(3); g3:SetSmoothing("IN_OUT")
+    frame.ghostDazed = gDazed
 
     -- Click the badge: load the raced ghost's embedded route into MDT (confirm
     -- popup; silent when the ghost carries none — the tooltip says when it does).
@@ -807,6 +866,9 @@ function Bar:Update()
     -- are missing (legacy/seeded data).
     local laps, lapMatch = M.LapDeltasByID(st.liveKills or {}, kills or {},
         st.liveIDs, ref.run and ref.run.bossIDs)
+    -- Where the skulls actually stand this frame — the Death Markers below shelf
+    -- their tombstones up out of these (never sideways: X carries the truth).
+    local bossX = {}
     for i = 1, nKills do
         local f = BossTick(i)
         f:ClearAllPoints()
@@ -843,6 +905,7 @@ function Bar:Update()
                 f:SetPoint("CENTER", frame.track, "LEFT", W - 5, 0)
             else
                 f:SetPoint("CENTER", frame.track, "LEFT", px(bossCourse), 0)
+                bossX[#bossX + 1] = px(bossCourse)
             end
             -- In the pile the NEXT milestone sits on top, so the stack's hover
             -- tooltip describes the kill you'll reach first, not the last one.
@@ -881,10 +944,6 @@ function Bar:Update()
         if pin ~= -1 then f:Show() end
     end
     for i = nKills + 1, #frame.bossTicks do frame.bossTicks[i]:Hide() end
-
-    -- No death marks on the track (Fredrik 2026-07-19): a death's cost shows as
-    -- losing ground to the ghost / getting red-zoned by the sweeper — nothing else.
-    -- Death data is still recorded, exported, and shown in the player tooltip.
 
     local aR, aG, aB = Style.GetAccent()
     local ghostCourse
@@ -1076,6 +1135,7 @@ function Bar:Update()
     -- panel re-lanes the runners identically. Pairing colors stay keyed to the
     -- ghost's BASE roster position — a sort moves lanes, never recolors.
     local nr = 0
+    local runnerLanes = {} -- {run, y} per drawn lane — the Death Markers below ride these
     local displayRows = KG.Splits and KG.Splits.BuildDisplayRows and KG.Splits.BuildDisplayRows(st) or {}
     for laneIdx, entry in ipairs(displayRows) do
         local run = entry.run
@@ -1089,7 +1149,9 @@ function Bar:Update()
             if f._smKey ~= run then f._smKey, f._sm = run, nil end
             local rCourse = ease(f._sm, M.CourseAt(run, st.elapsed, nBosses))
             f._sm = rCourse
-            f:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(rCourse), -3 - (laneIdx - 1) * 5)
+            local laneY = -3 - (laneIdx - 1) * 5
+            f:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(rCourse), laneY)
+            runnerLanes[#runnerLanes + 1] = { run = run, y = laneY }
             ApplyRunnerIcon(f.tex, run)
             local lit = Bar._previewRun == run
             f:SetAlpha(lit and 1 or (pinned(rCourse) ~= 0 and 0.3 or 0.55))
@@ -1102,32 +1164,90 @@ function Bar:Update()
     end
     for i = nr + 1, #frame.runners do frame.runners[i]:Hide() end
 
-    -- Death markers (Fredrik 2026-07-21, REVERSING the 2026-07-19 "no death
-    -- marks" call — his order: "bring back the death markers with a tombstone
-    -- icon"): one small tombstone under the track at the course position where
-    -- each of the group's deaths happened. Atlas poi-graveyard-neutral — the
-    -- same glyph RaiderIO's own MDI frame uses for death counts.
+    -- ── Death Markers ─────────────────────────────────────────────────────────
+    -- Tombstones returned 2026-07-21 by field order (reversing the 2026-07-19
+    -- removal); 2026-07-22 gave them a home, a companion, and a setting.
+    --
+    -- YOURS are HISTORY: they stand in the BOSS LANE on your own track — a death
+    -- is road furniture in your run, the same kind of landmark as a milestone —
+    -- and they stay put. A clash never moves the stone sideways: X is the
+    -- truth-carrying axis here, and a moved stone would lie about where you
+    -- died. It takes another SLOT instead, and the slots go BOTH ways around the
+    -- lane — 0, +4, -4, +8, -8 (Fredrik's field report on the first build: the
+    -- old one-way +6 ladder climbed straight out of the lane). A 5-death wipe
+    -- now spreads across 16 px around the line instead of towering 30 px above
+    -- it. A stone landing on a skull starts one slot up: bosses you have passed
+    -- are faded, so a small offset is all it takes to keep both readable.
+    --
+    -- A GHOST'S are the opposite kind of thing: a TELEGRAPH. They ride that
+    -- ghost's own lane, mark where its recorded run stopped to pay the death
+    -- penalty, and vanish the moment it reaches them — ahead of the ghost they
+    -- warn you a stumble is coming, behind it they are only clutter.
+    --
+    -- The setting ([Off / yours / everyone's], Options panel) is DISPLAY-ONLY by
+    -- design: no ghost's pace depends on it. A recorded timeline already carries
+    -- the penalty (Recorder's AnchorClock rides the official timer, which jumps
+    -- on a death), so the ghost stalls at its own graves whatever is drawn —
+    -- flipping the setting mid-run redraws and nothing else.
+    local deathMode = KG.db.deathMarkers or "all"
+    local STONE_W, STONE_H = 9, 12
+    -- Cluster slots, around the lane rather than up from it (his field report).
+    local SLOTS = { 0, 4, -4, 8, -8 }
+    -- ONE recipe for every tombstone on the track (his second field note: the
+    -- ghost's read as a different icon). Same atlas, same 9x12 box, ONE size —
+    -- "I liked Mario's ratio, use that everywhere" (2026-07-22); the ⅔ runner
+    -- stone that shipped in the fix an hour earlier is gone with the squashed
+    -- 7x9 that caused it. Only alpha says whose stone it is. Scale is kept as a
+    -- knob purely because lanes sit 5 px apart: if runner stones read as mush
+    -- when three ghosts all died, this is where they shrink.
+    local function Stone(pool, i, scale, alpha)
+        local mark = pool[i]
+        if not mark then
+            mark = Hover(frame.track, STONE_W, STONE_H)
+            mark.tex = mark:CreateTexture(nil, "ARTWORK")
+            mark.tex:SetAllPoints()
+            mark.tex:SetAtlas("poi-graveyard-neutral")
+            pool[i] = mark
+        end
+        mark:SetSize(STONE_W * scale, STONE_H * scale)
+        mark.tex:SetAlpha(alpha)
+        mark:ClearAllPoints()
+        return mark
+    end
+
     frame.deathMarks = frame.deathMarks or {}
     local nd = 0
-    if st.deaths then
+    if deathMode ~= "none" and st.deaths then
+        local placed = {} -- stones already standing this frame: {x, slot}
         for i = 1, #st.deaths do
             local d = st.deaths[i]
             local dt = d and d[1]
             if dt and dt <= st.elapsed then
                 local course = M.CourseAt(st.liveRun or { snapshots = {} }, dt, nBosses)
                 if pinned(course) == 0 then
-                    nd = nd + 1
-                    local mark = frame.deathMarks[nd]
-                    if not mark then
-                        mark = Style.Hover(frame.track, 9, 12)
-                        mark.tex = mark:CreateTexture(nil, "ARTWORK")
-                        mark.tex:SetAllPoints()
-                        mark.tex:SetAtlas("poi-graveyard-neutral")
-                        mark.tex:SetAlpha(0.75)
-                        frame.deathMarks[nd] = mark
+                    local x = px(course)
+                    -- A stone on a skull starts one slot off it; then take the
+                    -- first slot no neighbour is standing in. Past the last slot
+                    -- they share it — by then "a lot died here" is the message.
+                    local from = 1
+                    for _, bx in ipairs(bossX) do
+                        if math.abs(x - bx) < 10 then from = 2 break end
                     end
-                    mark:ClearAllPoints()
-                    mark:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(course), -1)
+                    local slot = #SLOTS
+                    for k = from, #SLOTS do
+                        local free = true
+                        for _, p in ipairs(placed) do
+                            if p.slot == k and math.abs(x - p.x) < 7 then free = false break end
+                        end
+                        if free then slot = k break end
+                    end
+                    placed[#placed + 1] = { x = x, slot = slot }
+                    nd = nd + 1
+                    local mark = Stone(frame.deathMarks, nd, 1, 0.75)
+                    -- Bottom-anchored on the skulls' own baseline (BossTick pins
+                    -- its skull at BOTTOM +2), so slot 1 shares the boss lane.
+                    mark:SetPoint("BOTTOM", frame.track, "BOTTOMLEFT", x, 2 + SLOTS[slot])
+                    mark:SetFrameLevel(frame.track:GetFrameLevel() + 2 + slot)
                     mark.tip = { string.format("Death #%d — %s", i, M.FormatClock(dt)) }
                     mark:Show()
                 end
@@ -1135,6 +1255,59 @@ function Bar:Update()
         end
     end
     for i = nd + 1, #frame.deathMarks do frame.deathMarks[i]:Hide() end
+
+    -- The ghosts' stones: the same stone, dimmer, on the lane its owner rides.
+    -- Only the ones still AHEAD of that ghost are drawn.
+    frame.ghostMarks = frame.ghostMarks or {}
+    local ng = 0
+    local function GhostStones(run, laneY, scale, alpha)
+        if deathMode ~= "all" or not (run and run.deaths) then return end
+        for i = 1, #run.deaths do
+            local dt = run.deaths[i] and run.deaths[i][1]
+            if dt and dt > st.elapsed and ng < 60 then
+                local course = M.CourseAt(run, dt, nBosses)
+                if pinned(course) == 0 then
+                    ng = ng + 1
+                    local mark = Stone(frame.ghostMarks, ng, scale, alpha)
+                    mark:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(course), laneY)
+                    mark.tip = {
+                        string.format("Ghost's death #%d — %s", i, M.FormatClock(dt)),
+                        "It stops here to pay the penalty",
+                    }
+                    mark:Show()
+                end
+            end
+        end
+    end
+    -- The raced ghost rides the badge lane; its stones sit on it (and clear as it
+    -- arrives, so the badge never has to share the spot for long).
+    if not ref.live then GhostStones(ref.run, -1, 1, 0.6) end
+    for laneIdx, entry in ipairs(runnerLanes) do
+        GhostStones(entry.run, -3 - (laneIdx - 1) * 5, 1, 0.45)
+    end
+    for i = ng + 1, #frame.ghostMarks do frame.ghostMarks[i]:Hide() end
+
+    -- The raced ghost's Dazed: it wobbles as it reaches one of its own deaths.
+    -- The window is in ROAD seconds like the walk cap — test mode compresses
+    -- time, so an unscaled 2.5 s would flash past in a quarter of a second.
+    -- Gated with the ghosts' stones, not merely "not off": someone who asked for
+    -- their own deaths only shouldn't be told about the ghost's either. Mario's
+    -- own Knockback is untouched by the setting — it is his run, not a marker.
+    local wobble = false
+    if deathMode == "all" and not ref.live and ref.run and ref.run.deaths then
+        for i = 1, #ref.run.deaths do
+            local dt = ref.run.deaths[i][1]
+            if dt and st.elapsed >= dt and st.elapsed < dt + 2.5 * capMul then
+                wobble = true
+                break
+            end
+        end
+    end
+    if wobble and not frame.ghostDazed:IsPlaying() then
+        frame.ghostDazed:Play()
+    elseif not wobble and frame.ghostDazed:IsPlaying() then
+        frame.ghostDazed:Stop()
+    end
 
     local cd = st.pct - ghostPctNow
     local cc = (cd >= 0) and good or bad
@@ -1318,9 +1491,13 @@ function Bar:ShowSummary(s)
     if frame.deathMarks then
         for i = 1, #frame.deathMarks do frame.deathMarks[i]:Hide() end
     end
+    if frame.ghostMarks then
+        for i = 1, #frame.ghostMarks do frame.ghostMarks[i]:Hide() end
+    end
     for i = 1, 3 do frame.paceCars[i]:Hide() end
     if frame.walkAnim:IsPlaying() then frame.walkAnim:Stop() end -- parked on the podium
     if frame.dazedAnim:IsPlaying() then frame.dazedAnim:Stop() end
+    if frame.ghostDazed:IsPlaying() then frame.ghostDazed:Stop() end -- both runners still for the photo
     frame._kb, frame._kbPot, frame._lastDeathCount, frame._lastTimeLost = nil, nil, nil, nil -- no knockback residue in the photo
 
     -- The finish photo (full-road view, no camera).
@@ -1372,6 +1549,13 @@ function Bar:Refresh()
     if not frame then Build() end
     UpdateAttachment()
     if KG.db.enabled == false and not KG.editModePreview then frame:Hide(); return end
+    -- Raid stand-down (M+-only for now, Fredrik 2026-07-22): inside a raid
+    -- instance nothing draws — a left-on /kg test demo and an undismissed
+    -- Finish Photo included. Edit Mode preview keeps the same exemption as
+    -- the enabled toggle above (placement is a config surface, not a race).
+    -- Recording never ran in raids (every recorder path is C_ChallengeMode-
+    -- gated); this stands the DISPLAY down. Splits follows via bar:IsShown().
+    if KG.Scenario:InRaidInstance() and not KG.editModePreview then frame:Hide(); return end
     if KG.testMode or KG.editModePreview or (KG.Recorder:IsActive() and KG.Recorder.currentRef) then
         frame.closeBtn:Hide()
         frame.delta:ClearAllPoints()

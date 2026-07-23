@@ -289,6 +289,12 @@ function G:StoreRioGhost(run)
             end
         end
     end
+    -- Hiding survives the replay swap (Hidden Ghosts, 2026-07-22). The flag rides
+    -- the run TABLE, and a new replay replaces that table wholesale — without this
+    -- carry-over the row would un-hide itself every time RaiderIO's pick moves,
+    -- which reads as the setting not sticking.
+    local prev = G:GetStoredRioRun(run.mapID)
+    if prev and prev.hidden then run.hidden = true end
     db.runs[KG.RIO_CHAR] = db.runs[KG.RIO_CHAR] or {}
     db.runs[KG.RIO_CHAR][run.mapID] = { [run.level] = { [run.chests] = run } }
     G:InvalidateRoster()
@@ -341,6 +347,10 @@ end
 --- paths, which is the entire point.
 function G:BuildRioRef(mapID, pinned)
     local run = G:BuildRioGhost(mapID) or G:GetStoredRioRun(mapID)
+    -- Hidden and not pinned: parked out of the automatic chain, and the live
+    -- mirror must not sneak the same replay back in through the side door — the
+    -- caller falls through to season best / par.
+    if run and run.hidden and not pinned then return nil end
     if run then
         return {
             kind = "rio", startPinned = pinned or nil,
@@ -509,15 +519,48 @@ end
 --- new pinned state. Pinning any row replaces the dungeon's previous pin, rio
 --- or normal, either direction (the newer deliberate act wins) — and so does
 --- an import on THIS character (StoreImport claims the slot unconditionally).
+--- The stored run at a Library row's address, Raider.IO rows included (their pin
+--- key is level-independent, so the mapID alone addresses them).
+function G:RunAt(charKey, mapID, level, tier)
+    if charKey == KG.RIO_CHAR then return G:GetStoredRioRun(mapID) end
+    local byMap = KG.db.runs[charKey]
+    local byLevel = byMap and byMap[mapID]
+    local tiers = byLevel and byLevel[level]
+    return tiers and tiers[tier] or nil
+end
+
+--- Does THIS character's dungeon pick point at exactly this row? (Pins are per
+--- character: an alt's pin is invisible here by design — it keeps racing that
+--- ghost on the alt even after this character hides it.)
+function G:IsPinned(charKey, mapID, level, tier)
+    local mine = G:MyPicks()
+    local p = mine and mine[mapID]
+    if type(p) ~= "table" or p.char ~= charKey then return false end
+    if charKey == KG.RIO_CHAR then return true end
+    return p.level == level and p.tier == tier
+end
+
 function G:TogglePin(charKey, mapID, level, tier)
     local mine = G:MyPicks(true)
     local p = mine[mapID]
+    -- Pin beats hide (Hidden Ghosts, 2026-07-22): pinning is the deliberate act,
+    -- so it un-parks the ghost — the same shape as the Depleted loosening, where
+    -- an explicit pin overrides a rule the automatic chain still obeys. Un-hiding
+    -- on the way IN only; unpinning leaves the ghost visible, not re-hidden.
+    local function Unhide()
+        local run = G:RunAt(charKey, mapID, level, tier)
+        if run and run.hidden then
+            run.hidden = nil
+            G:InvalidateRoster()
+        end
+    end
     if charKey == KG.RIO_CHAR then
         if type(p) == "table" and p.char == KG.RIO_CHAR then
             mine[mapID] = nil
             return false
         end
         mine[mapID] = { char = charKey }
+        Unhide()
         return true
     end
     if not tier then return false end
@@ -526,7 +569,33 @@ function G:TogglePin(charKey, mapID, level, tier)
         return false
     end
     mine[mapID] = { char = charKey, level = level, tier = tier }
+    Unhide()
     return true
+end
+
+--- Toggle the Hidden flag for a run (the Ghost Library eye, Fredrik 2026-07-22:
+--- "be able to hide Ghost Racers from the Ghost Roster"). Hidden = PARKED: never
+--- fills the Ghost Roster, never picked by the automatic reference chain — the
+--- Depleted rule's exact shape, including its escape hatch, since an explicit Pin
+--- still races it (and un-hides it on the way).
+---
+--- The flag lives on the run TABLE, not on the tier slot, so it dies with the
+--- ghost: a new personal best replacing a hidden incumbent is a NEW table and is
+--- born visible. Account-global by construction (the ghost is hidden, not one
+--- character's view of it) — deliberately unlike pins, which are per character.
+--- Stripped from exports by the codec; imports arrive visible.
+---
+--- Refuses on a row THIS character has pinned — the Library gives such rows no eye
+--- at all (Fredrik: "the pinned one cannot be x:ed") and this is the belt-and-
+--- suspenders for any other caller. Returns the new hidden state, or nil when the
+--- address holds no run.
+function G:ToggleHidden(charKey, mapID, level, tier)
+    local run = G:RunAt(charKey, mapID, level, tier)
+    if not run then return nil end
+    if G:IsPinned(charKey, mapID, level, tier) then return run.hidden and true or false end
+    run.hidden = (not run.hidden) or nil
+    G:InvalidateRoster()
+    return run.hidden and true or false
 end
 
 --- Decode + validate + store an export string. Returns the stored run (plus, third,
@@ -625,7 +694,8 @@ end
 --- (linear) → par (linear). Every reference carries `snapshots` so the bar and
 --- delta math treat all kinds uniformly. Depleted (tier 0) runs are recorded
 --- but NEVER raced (Fredrik 2026-07-19) — the +1 sweeper is the deplete
---- pressure. A pinned reference races PINNED (`startPinned` — auto-Overtakes
+--- pressure. Hidden Ghosts (2026-07-22) are skipped by every automatic step
+--- below for the same reason a Depleted run is: the player parked them. A pinned reference races PINNED (`startPinned` — auto-Overtakes
 --- blocked until unpinned in-race), the Ghost Library's "races when you run
 --- <dungeon>" contract. A dangling pin (run deleted, replay unreadable) falls
 --- through to the automatic chain silently.
@@ -665,12 +735,13 @@ function G:BuildReference(mapID, level)
     end
 
     local _, byLevel = RunsFor(KG.CharacterKey(), mapID, level or -1, false)
-    -- Only levels holding at least one TIMED run participate in level fallback, so a
-    -- level with nothing but depleted runs can't shadow a timed run one level down.
+    -- Only levels holding at least one RACEABLE run participate in level fallback, so a
+    -- level with nothing but depleted or hidden runs can't shadow a timed run one
+    -- level down (the skipHidden pass, 2026-07-22, extends the depleted rule).
     local timedByLevel
     if byLevel then
         for lvl, tiers in pairs(byLevel) do
-            if M.BestRun(tiers, 1) then
+            if M.BestRun(tiers, 1, true) then
                 timedByLevel = timedByLevel or {}
                 timedByLevel[lvl] = tiers
             end
@@ -678,7 +749,7 @@ function G:BuildReference(mapID, level)
     end
     local tiers, lvlUsed = M.PickLevel(timedByLevel, level)
     if tiers then
-        local run, tier = M.BestRun(tiers, 1)
+        local run, tier = M.BestRun(tiers, 1, true)
         if run and run.snapshots then
             return {
                 kind = "personal",
@@ -771,7 +842,10 @@ function G:BuildRoster(mapID, level, wantRoute)
     local myKey = KG.CharacterKey()
 
     local function add(run, tag)
-        if #out < target and run and run.snapshots and not seen[run] then
+        -- `hidden` (the Library eye, 2026-07-22) drops a ghost from the roster at
+        -- the single choke point every priority branch funnels through — including
+        -- the Raider.IO row, which the automatic chain reaches at priority 5.
+        if #out < target and run and run.snapshots and not seen[run] and not run.hidden then
             seen[run] = true
             out[#out + 1] = { run = run, tag = tag }
         end

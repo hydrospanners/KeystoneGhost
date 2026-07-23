@@ -32,6 +32,10 @@ A race bar (optionally docked under the EllesmereUI M+ timer, styled to match):
   Pull #12 vs Ghost #14` — the creator in their class color, exactly like MDT's own
   route list; whoever is a pull ahead wears green, the trailer red; on the same
   pull the line stays neutral.
+- **Tombstones** mark deaths. Yours stand where you died and stay there. A ghost's
+  stand on its lane ahead of it, showing where that run lost 15 seconds, and clear
+  away as the ghost reaches them (it wobbles when it does). Set it to off, your
+  deaths only, or everyone's in the options panel.
 - **Hover anything** — skulls, cars, runners, roster rows — for details ("Ghost's 2nd
   kill — Chief Corewright at 08:37 · 42% count / You: dead at 08:07 (lap -0:30)").
 

@@ -130,6 +130,17 @@ function S:GetStagingMapID()
     return found
 end
 
+--- Raid stand-down (Fredrik 2026-07-22): the addon is M+-only for now, so the
+--- Bar never draws inside raid instances. Instance TYPE, not group type —
+--- IsInRaid() is true for a raid group in the open world, which is not raid
+--- content. Future raid features branch from here.
+function S:InRaidInstance()
+    if not GetInstanceInfo then return false end
+    local ok, _, instanceType = pcall(GetInstanceInfo)
+    if not ok or not canRead(instanceType) then return false end
+    return instanceType == "raid"
+end
+
 function S:IsChallengeActive()
     local ok, active = pcall(C_ChallengeMode.IsChallengeModeActive)
     if ok then

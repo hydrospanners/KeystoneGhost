@@ -26,13 +26,27 @@ local PAD = 12
 local TITLE_H, HEADER_H, GROUP_H, ROW_H, BOTTOM_H = 30, 18, 22, 24, 34
 -- Column x-offsets inside a row. Reaction round 2026-07-21 (Fredrik): the share
 -- button sits FAR LEFT, delete stays FAR RIGHT — the destructive action lives
--- alone at the opposite edge from everything you'd click routinely.
-local COL = { SHARE = 0, LVL = 26, TIER = 62, TIME = 116, DATE = 168, ROUTE = 214, OWNER = 400, DEL = 622 }
-local OWNER_W, ROUTE_W = COL.DEL - COL.OWNER - 6, COL.OWNER - COL.ROUTE - 8
+-- alone at the opposite edge from everything you'd click routinely. The eye
+-- (2026-07-22) sits a clear 36 px inside delete: same right-hand action cluster,
+-- but delete keeps the edge to itself.
+local COL = { SHARE = 0, LVL = 26, TIER = 62, TIME = 116, DATE = 168, ROUTE = 214, OWNER = 400,
+    EYE = 586, DEL = 622 }
+local OWNER_W, ROUTE_W = COL.EYE - COL.OWNER - 6, COL.OWNER - COL.ROUTE - 8
 
 local GOLD = { 1, 0.82, 0.15 } -- the pin gold (Splits' lock tint)
 local TIER_COLOR = { [3] = Style.TICK3, [2] = Style.TICK2, [1] = Style.TICK1, [0] = Style.GRAY }
 local ROUTE_GRAY = { 0.63, 0.63, 0.66 } -- the route cell at rest; hover brightens (clickable cue)
+
+-- The hide toggle's art, bundled like share-icon.tga (64x64 32-bit uncompressed
+-- TGA, white silhouette + alpha, so the vertex tint colors it). OWN art on
+-- purpose: the first cut used the Blizzard atlas `transmog-icon-hidden` —
+-- grep-evidenced in a live addon, which proved someone had WRITTEN the name, not
+-- that it still resolves in 12.x. It didn't: Fredrik's screenshot showed an empty
+-- frame (2026-07-22). A bundled file cannot silently evaporate, and depending on
+-- another addon's eye art (Plater, BetterBags both ship one) would only move the
+-- blank-icon failure to "that addon isn't installed".
+local EYE_ICON = "Interface\\AddOns\\KeystoneGhost\\eye-icon.tga"
+local EYE_OFF_ICON = "Interface\\AddOns\\KeystoneGhost\\eye-off-icon.tga"
 
 local frame -- the window; built lazily on first toggle
 
@@ -154,6 +168,9 @@ local function RowTip(row)
         local cluster = ClusterLine(run)
         if cluster then tip[#tip + 1] = cluster end
     end
+    if row.hidden then
+        tip[#tip + 1] = "Hidden — parked out of the Ghost Roster and the automatic pick"
+    end
     -- Every pin is DUNGEON-WIDE and per character (Fredrik 2026-07-21: "you
     -- might want to race against your +12 in a +20") — one copy for all rows.
     if row.pinned then
@@ -161,7 +178,8 @@ local function RowTip(row)
     else
         tip[#tip + 1] = string.format("Click: pin — races when you run %s (any key level%s)",
             row.groupName,
-            row.tier == 0 and "; a Depleted run races only by this pin" or "")
+            row.hidden and "; this un-hides it"
+                or (row.tier == 0 and "; a Depleted run races only by this pin" or ""))
     end
     return tip
 end
@@ -294,6 +312,8 @@ local function AcquireRow(i)
         b.tex:SetAllPoints()
         b.tex:SetTexture(texture)
         b:SetAlpha(0.75)
+        -- `restAlpha` lets a stateful button (the eye) carry its own resting
+        -- brightness without the hover pair stomping it back to the shared 0.75.
         b:SetScript("OnEnter", function(self)
             self:SetAlpha(1)
             if self.tipText then
@@ -303,7 +323,7 @@ local function AcquireRow(i)
             end
         end)
         b:SetScript("OnLeave", function(self)
-            self:SetAlpha(0.75)
+            self:SetAlpha(self.restAlpha or 0.75)
             GameTooltip:Hide()
         end)
         return b
@@ -341,6 +361,19 @@ local function AcquireRow(i)
             print("|cff88ccffKeystoneGhost|r: export failed — " .. (err or "unknown error"))
         end
     end)
+    -- The eye = HIDE, the reversible cousin of delete (Fredrik 2026-07-22: "be
+    -- able to hide Ghost Racers from the Ghost Roster… they need to be able to be
+    -- unhidden somewhere. Maybe in the Library?"). The glyph shows the CURRENT
+    -- state, the universal convention: open eye = racing, slashed eye = parked.
+    -- The row it sits on stays listed either way — this IS the un-hide door, so
+    -- the ghost must never disappear from view.
+    row.eye = ActionButton(COL.EYE, EYE_ICON)
+    row.eye:SetScript("OnClick", function(self)
+        local r = self.row
+        KG.Ghosts:ToggleHidden(r.charKey, r.mapID, r.level, r.tier)
+        Library:Refresh()
+    end)
+
     row.del = ActionButton(COL.DEL, "Interface\\Buttons\\UI-GroupLoot-Pass-Up")
     row.del.tipText = "Delete this ghost"
     row.del:SetScript("OnClick", function(self)
@@ -543,9 +576,13 @@ function Library:Refresh()
         local h = AcquireGroupHeader(usedG)
         h:SetPoint("TOPLEFT", 0, -y)
         h:SetPoint("TOPRIGHT", 0, -y)
-        local n = #g.rows
+        local n, nHidden = #g.rows, 0
+        for _, r in ipairs(g.rows) do
+            if r.hidden then nHidden = nHidden + 1 end
+        end
         h.text:SetText(n == 0 and (g.name .. " |cff6f6f78· no ghosts yet|r")
-            or string.format("%s |cff6f6f78· %d ghost%s|r", g.name, n, n == 1 and "" or "s"))
+            or string.format("%s |cff6f6f78· %d ghost%s%s|r", g.name, n, n == 1 and "" or "s",
+                nHidden > 0 and (", " .. nHidden .. " hidden") or ""))
         h.text:SetTextColor(Style.GetAccent())
         h:Show()
         y = y + GROUP_H
@@ -565,16 +602,20 @@ function Library:Refresh()
             r.groupName = g.name
             row.row = r
             row.route.row, row.share.row, row.del.row, row.rioMark.row = r, r, r, r
+            row.eye.row = r
             row:SetPoint("TOPLEFT", 6, -y)
             row:SetPoint("TOPRIGHT", -2, -y)
 
             local depleted = r.tier == 0
-            local a = depleted and 0.55 or 1
+            -- Hidden rows read like Depleted ones — dimmed, because both mean
+            -- "not racing". The Result column and the lit eye tell them apart.
+            local a = (depleted or r.hidden) and 0.55 or 1
             row.lvl:SetText("+" .. r.level)
             row.lvl:SetAlpha(a)
             row.tier:SetText(depleted and "Depleted" or M.TierLabel(r.tier))
             local tc = TIER_COLOR[r.tier] or Style.TEXT
             row.tier:SetTextColor(tc[1], tc[2], tc[3])
+            row.tier:SetAlpha(a)
             row.time:SetText(M.FormatClock(r.run.durationSec or 0))
             row.time:SetAlpha(a)
             row.date:SetText(DateShort(r.run.completedAt))
@@ -588,7 +629,7 @@ function Library:Refresh()
             row.route.text:SetAlpha(a)
             row.route:EnableMouse(KG.Ghosts:RouteForHash(r.run.routeHash) ~= nil)
             row.owner:SetText(OwnerText(r))
-            row.owner:SetAlpha(depleted and 0.65 or 1)
+            row.owner:SetAlpha((depleted or r.hidden) and 0.65 or 1)
 
             -- Depleted: still never auto-raced/rostered/exported — the share button
             -- stays hidden — but PINNING is allowed (Fredrik 2026-07-21): an
@@ -613,6 +654,24 @@ function Library:Refresh()
             local isRio = r.charKey == KG.RIO_CHAR
             row.share:SetShown(not depleted and not isRio)
             row.del:SetShown(not isRio)
+            -- The eye is the ONE control a Raider.IO row gets besides the link:
+            -- delete was removed as a lie (the cache re-banks on next sight), but
+            -- hiding is honest — it survives the re-bank (Ghosts:StoreRioGhost).
+            -- A pinned row wears no eye at all (Fredrik: "the pinned one cannot
+            -- be x:ed so it shouldn't have one") — un-hiding via pin is the rule,
+            -- so pinned-and-hidden is a state that cannot exist.
+            row.eye:SetShown(not r.pinned)
+            row.eye.tex:SetTexture(r.hidden and EYE_OFF_ICON or EYE_ICON)
+            if r.hidden then
+                row.eye.tex:SetVertexColor(Style.GetAccent())
+                row.eye.restAlpha = 0.95
+                row.eye.tipText = "Hidden — click to let it race again"
+            else
+                row.eye.tex:SetVertexColor(0.55, 0.55, 0.58)
+                row.eye.restAlpha = 0.5
+                row.eye.tipText = "Hide — keep this ghost out of the Ghost Roster"
+            end
+            row.eye:SetAlpha(row.eye.restAlpha)
             local rioLogo = isRio and Style.RaiderIOLogo() or nil
             if rioLogo then row.rioMark.tex:SetTexture(rioLogo) end
             row.rioMark.tipText = (isRio and r.run.rioUrl)

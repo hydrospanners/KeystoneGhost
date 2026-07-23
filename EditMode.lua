@@ -104,6 +104,28 @@ function EM:Setup()
             end,
         },
         {
+            -- "How many Ghost Racers to show" (Fredrik 2026-07-22). Edit Mode, not
+            -- the Options panel: this is literally how many runners get drawn on
+            -- the track, and the architecture rule gives Edit Mode what's drawn.
+            -- The Roster Panel clamps at 4 rows and Style has exactly 4 pairing
+            -- colors, so 4 is the honest ceiling. 0 = no fillers: just you and the
+            -- ghost you're racing (which still gets its row).
+            kind = LEM.SettingType.Slider,
+            name = "Ghost Roster size",
+            desc = "How many ghosts race you at once. Lower it to declutter the track; 0 leaves only the ghost you are racing. Hide individual ghosts in the Ghost Library instead.",
+            default = 3,
+            minValue = 0,
+            maxValue = 4,
+            valueStep = 1,
+            formatter = function(v) return string.format("%d", v) end,
+            get = function() return KG.db.rosterSize or 3 end,
+            set = function(_, value)
+                KG.db.rosterSize = value
+                KG.Ghosts:InvalidateRoster()
+                KG.Bar:Refresh(); KG.Splits:Refresh()
+            end,
+        },
+        {
             kind = LEM.SettingType.Checkbox,
             name = "Boss lap splits",
             desc = "Show per-boss lap deltas against every stored ghost below the bar.",

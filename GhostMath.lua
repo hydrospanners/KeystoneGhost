@@ -504,10 +504,14 @@ end
 --- Fastest ghost in a tier table. Within one (map, level), a faster time always means an
 --- equal-or-higher tier, so scanning tiers top-down finds the fastest run. Pass
 --- minTier = 1 to skip depleted runs (recorded but never raced — Fredrik 2026-07-19).
-function M.BestRun(tiers, minTier)
+--- `skipHidden` skips Hidden Ghosts (the Library eye, 2026-07-22) — parked ghosts
+--- leave the AUTOMATIC chain the way Depleted runs do; an explicit Pin is the one
+--- door back, and pinning un-hides.
+function M.BestRun(tiers, minTier, skipHidden)
     if type(tiers) ~= "table" then return nil end
     for tier = KG.MAX_TIER, minTier or 0, -1 do
-        if tiers[tier] then return tiers[tier], tier end
+        local run = tiers[tier]
+        if run and not (skipHidden and run.hidden) then return run, tier end
     end
     return nil
 end
@@ -665,7 +669,7 @@ end
 --- table (db.picks[me] via Ghosts:MyPicks, may be nil): the one row matching
 --- pick[mapID] — char + level + tier; Raider.IO rows match on char alone —
 --- is flagged `pinned`. One selected row per dungeon, per character
---- (Fredrik 2026-07-21).
+--- (Fredrik 2026-07-21). Rows also carry `hidden` (the Library eye, 2026-07-22).
 --- `seasonMapIDs` (optional array) seeds a group for EVERY season dungeon, so
 --- dungeons without data still show — with an honest empty state instead of
 --- silently missing (Fredrik's bug report, 2026-07-21: "I don't see all
@@ -703,6 +707,10 @@ function M.LibraryModel(runs, pick, nameFor, seasonMapIDs)
                         g.rows[#g.rows + 1] = {
                             charKey = charKey, mapID = mapID, level = level, tier = tier, run = run,
                             pinned = pinned,
+                            -- Hidden Ghosts keep their PLACE in the list (unlike
+                            -- Depleted, which sinks): un-hiding is a click on the
+                            -- row you were already looking at, not a hunt.
+                            hidden = run.hidden and true or false,
                         }
                     end
                 end
