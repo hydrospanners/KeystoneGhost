@@ -2,6 +2,13 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.10.2] - 2026-07-24
+
+- Empty Ghost Library groups no longer each print the "no ghosts yet" tip.
+  Only the first empty dungeon shows it.
+- The `/kg test` demo stages fewer deaths across the run, so the demo is a
+  stumble again instead of a wipe.
+
 ## [0.10.0] - 2026-07-23
 
 - Ghosts now show their deaths. A tombstone stands on the ghost's own lane

@@ -264,21 +264,19 @@ local function TestState()
     end
 
     -- Simulated group deaths (Fredrik 2026-07-19: verify the Knockback + Death Pot in
-    -- the demo): one death, then two in a row, then one — repeating every ~30
-    -- sim-seconds, so both the single stumble and the pot-gathered double show.
-    -- Doubles land as TWO ticks (0.8 sim-s apart) so the second death arrives while
+    -- the demo): one stumble, then a pot-gathered double, then one more. Paced at
+    -- fractions of the run so the rate stays ~1-3 deaths per 10 minutes whatever the
+    -- base recording's length (Fredrik 2026-07-23: every-30s was a wipefest).
+    -- The double lands as TWO ticks (0.8 sim-s apart) so the second death arrives while
     -- the first knock is animating — that's the Death Pot path, not just a big knock.
-    local deaths, dT, dDouble = 0, 45, false
+    local deaths = 0
     local simDeaths = {} -- {t, running count} — feeds the tombstone Death Markers
-    while dT <= elapsed do
+    local dur = test.run.durationSec or 1620
+    for _, frac in ipairs({ 0.15, 0.42, 0.42 + 0.8 / dur, 0.72 }) do
+        local dT = dur * frac
+        if dT > elapsed then break end
         deaths = deaths + 1
         simDeaths[#simDeaths + 1] = { dT, deaths }
-        if dDouble and dT + 0.8 <= elapsed then
-            deaths = deaths + 1
-            simDeaths[#simDeaths + 1] = { dT + 0.8, deaths }
-        end
-        dDouble = not dDouble
-        dT = dT + 30
     end
 
     -- Even loops race ONLY the Raider.IO ghost (SeedTestSwitch alternates): a

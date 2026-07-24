@@ -587,7 +587,11 @@ function Library:Refresh()
         h:Show()
         y = y + GROUP_H
 
-        if n == 0 then
+        -- The hint is advice, and advice repeated once per dungeon is wallpaper
+        -- (Fredrik 2026-07-23: a friend's fresh install was 8 identical lines).
+        -- Only the FIRST empty group carries it; the rest say "no ghosts yet" in
+        -- the header and leave it at that.
+        if n == 0 and usedH == 0 then
             usedH = usedH + 1
             local hint = AcquireHint(usedH)
             hint:SetPoint("TOPLEFT", frame.content, "TOPLEFT", 6, -y)
