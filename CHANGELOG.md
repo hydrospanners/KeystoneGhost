@@ -2,6 +2,16 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.10.3] - 2026-07-25
+
+- The account region never actually reached a saved run. It was read at the
+  start of every key and then lost on the way to storage, so every ghost and
+  every share string since 0.9.1 has it empty. New runs carry it. The old ones
+  can't be fixed after the fact.
+- Runs with an MDT route now record when each pull's first mob died, next to
+  when the pull was finished. Nothing to see in game yet. It's there so the gap
+  between two pulls can be split into the walk and the fight.
+
 ## [0.10.2] - 2026-07-24
 
 - Empty Ghost Library groups no longer each print the "no ghosts yet" tip.

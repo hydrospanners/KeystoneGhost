@@ -184,8 +184,8 @@ end
 -- ── Wire-run shaping ───────────────────────────────────────────────────────────
 
 -- Arrays that travel as streams instead of plain tables. Sparse tables
--- (bossEngages, pullTimes) and string arrays (bossNames) stay plain — LibSerialize
--- handles them fine and streams can't carry holes.
+-- (bossEngages, pullTimes, pullFirstForces) and string arrays (bossNames) stay plain
+-- — LibSerialize handles them fine and streams can't carry holes.
 local STREAMED = { snapshots = true, bossKills = true, bossCounts = true, deaths = true }
 
 --- Fields that live on the run table but are LOCAL preference, not run data:

@@ -10,8 +10,22 @@
 --
 -- This module is deliberately WoW-API-free: the recorder feeds it raw forces, the boss
 -- kill count, and the clock. That makes it fully offline-testable (tests/run.lua) and
--- lets it double as the recorder of per-pull completion TIMES — the data future
--- "per-pull lap" UI needs is captured on every run from now on.
+-- lets it double as the recorder of per-pull TIMES — the data a future "per-pull lap"
+-- UI needs is captured on every run from now on.
+--
+-- TWO stamps per pull since 2026-07-25:
+--   * `pullTimes[k]` — when pull k first tested COMPLETE (threshold, or the boss
+--     criterion for a boss pull). A COMPLETION time. The name doesn't say so and
+--     is kept anyway — it is in the wire contract, and docs/DATA-DICTIONARY.md is
+--     where that meaning lives now (Fredrik's rule: a shipped name changes when we
+--     break the contract on purpose, not because a better word turned up).
+--   * `pullFirstForces[k]` — when forces first climbed PAST pull k-1's cumulative,
+--     i.e. the first kill that can only belong to pull k.
+-- Completion-to-completion lumps travel and fighting together; with both stamps the
+-- split is `firstForces[k] - pullTimes[k-1]` (walking there and opening the pack)
+-- and `pullTimes[k] - firstForces[k]` (killing it). Neither is a combat-log engage —
+-- this addon has no engage event for trash, which is exactly why nothing here claims
+-- one. Boss pulls have a real engage already: `run.bossEngages` (ENCOUNTER_START).
 local ADDON_NAME, NS = ...
 local KG = NS.KG
 
@@ -61,12 +75,29 @@ function Track.ComputeCompletion(cumulativeForces, bossPulls, bossCompleted, raw
     return completed, current
 end
 
+--- Pure first-forces computation: pull k has been opened once raw forces climb past
+--- pull k-1's cumulative — the first award that cannot belong to an earlier pull.
+--- A pull with NO forces budget of its own (a boss pull: cumulative doesn't move)
+--- never gets a stamp; its engage lives in `run.bossEngages` instead. Absolute like
+--- ComputeCompletion, so it is drift-free and self-heals after a /reload.
+--- @return startedSet
+function Track.ComputeFirstForces(cumulativeForces, raw)
+    local started = {}
+    local prevCumulative = 0
+    for k = 1, (cumulativeForces and #cumulativeForces or 0) do
+        local ck = cumulativeForces[k] or prevCumulative
+        started[k] = ck > prevCumulative and raw > prevCumulative
+        prevCumulative = ck
+    end
+    return started
+end
+
 --- Start tracking a run against `route` ({ cumulativeForces, bossPull, nPulls });
---- nil to disable. `seedPullTimes` (Live Run adoption after a /reload) re-attaches
---- the persisted pull-time table BY REFERENCE — recording continues into the same
---- table; already-stamped completions are kept, everything else self-heals from
---- absolute forces on the first Update.
-function Track:Reset(route, seedPullTimes)
+--- nil to disable. `seedPullTimes` / `seedFirstForces` (Live Run adoption after a
+--- /reload) re-attach the persisted stamp tables BY REFERENCE — recording continues
+--- into the same tables; already-stamped times are kept, everything else self-heals
+--- from absolute forces on the first Update.
+function Track:Reset(route, seedPullTimes, seedFirstForces)
     st = {
         route = route,
         bossCompleted = {},
@@ -74,6 +105,7 @@ function Track:Reset(route, seedPullTimes)
         pending = 0,
         completed = {},
         pullTimes = seedPullTimes or {},
+        pullFirstForces = seedFirstForces or {},
         currentPull = (route and route.nPulls > 0) and 1 or nil,
     }
 end
@@ -81,7 +113,7 @@ end
 --- Advance from the current snapshot. `bossCount` = total boss criteria completed so
 --- far; new kills are assigned to boss pulls in ascending route order (same heuristic
 --- as APL — correct for on-route play, best-effort off-route). `t` stamps first-time
---- pull completions into pullTimes.
+--- pull completions and first-forces into their tables.
 --- @return currentPull|nil
 function Track:Update(raw, bossCount, t)
     local route = st.route
@@ -103,9 +135,13 @@ function Track:Update(raw, bossCount, t)
 
     local completed, current = Track.ComputeCompletion(
         route.cumulativeForces, route.bossPull, st.bossCompleted, raw, Threshold())
+    local started = Track.ComputeFirstForces(route.cumulativeForces, raw)
     for k = 1, route.nPulls do
         if completed[k] and not st.pullTimes[k] and t then
             st.pullTimes[k] = t
+        end
+        if started[k] and not st.pullFirstForces[k] and t then
+            st.pullFirstForces[k] = t
         end
     end
     st.completed = completed
@@ -119,7 +155,14 @@ function Track:GetCurrentPull()
     return st.currentPull, st.route.nPulls
 end
 
---- First-completion time per pull index (sparse until the run finishes the route).
+--- First-COMPLETION time per pull index (sparse until the run finishes the route).
+--- Named `pullTimes` on the wire; see docs/DATA-DICTIONARY.md.
 function Track:GetPullTimes()
     return st.pullTimes
+end
+
+--- Time the first forces landed on each pull (sparse: boss pulls and unreached
+--- pulls have no entry). See the header for the travel-vs-fight split.
+function Track:GetPullFirstForces()
+    return st.pullFirstForces
 end

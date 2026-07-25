@@ -152,7 +152,9 @@ function R:OnKeyStart()
     rec.route = KG.Route:GetForChallengeMap(rec.mapID)
     rec.routeName = rec.route and rec.route.name or nil
     KG.PullTrack:Reset(rec.route)
-    rec.pullTimes = KG.PullTrack:GetPullTimes() -- by reference: pull laps persist too
+    -- By reference: pull laps persist into the Live Run slot too.
+    rec.pullTimes = KG.PullTrack:GetPullTimes()
+    rec.pullFirstForces = KG.PullTrack:GetPullFirstForces()
 
     -- Live Run persistence: rec ITSELF is the SavedVariables slot from here to run
     -- end — every reload/logout flush carries the recording as it stands, and
@@ -257,7 +259,11 @@ function R:AdoptLiveRun(lr, elapsed)
         rec.deathCount, rec.deathTimeLost = n, timeLost
     end
 
-    KG.PullTrack:Reset(rec.route, rec.pullTimes)
+    -- A Live Run persisted by a build without pullFirstForces adopts fine: the
+    -- missing stamps self-heal from absolute forces on the first Update.
+    KG.PullTrack:Reset(rec.route, rec.pullTimes, rec.pullFirstForces)
+    rec.pullTimes = KG.PullTrack:GetPullTimes()
+    rec.pullFirstForces = KG.PullTrack:GetPullFirstForces()
     R.currentRef = KG.Ghosts:BuildReference(rec.mapID, rec.level)
     R.lastSwitch = nil
     overtake = R.currentRef
@@ -596,8 +602,36 @@ function R:OnKeyEnd()
 
     if saved.partial then return end -- resumed after /reload: timeline incomplete, never save
 
+    if (saved.lastTotal or 0) <= 0 then return end -- forces never readable: nothing raceable to keep
+
+    local stored = KG.Ghosts:Save(R.ShapeRun(saved, {
+        durationSec = durationSec,
+        level = level,
+        chests = chests,
+        completedAt = S:ServerNow(), -- server epoch: client clocks lie
+        week = S:WeekEndEpoch(), -- reset-week identity ("reset best" seed, 2026-07-21)
+        party = S:GetPartyContext(), -- ratings at completion
+    }))
+    KG.db.lastRecorded = { mapID = saved.mapID, level = level } -- default /kg export target
+    if stored and saved.route and saved.route.hash and saved.route.pulls then
+        KG.Ghosts:StoreRoute(saved.route) -- the run's route as it was AT KEY START
+    end
+    if stored then
+        print(string.format("|cff88ccffKeystoneGhost|r: run saved as %s ghost (+%d, %s).",
+            KG.Math.TierLabel(chests), level, KG.Math.FormatClock(durationSec)))
+        R:StartPartySpecSweep()
+    end
+end
+
+--- The finished recording → the stored/wire run table. PURE: every Blizzard read the
+--- save needs is handed in via `fin` ({ durationSec, level, chests, completedAt, week,
+--- party }), so the PRODUCER side is offline-testable (tests/test_recorder.lua) —
+--- which is the gap that let `region` be captured at key start and then dropped here
+--- for five releases while the codec round-trip test happily passed on a hand-injected
+--- field. Consumes `saved` destructively (it is the finished run's own table).
+function R.ShapeRun(saved, fin)
+    local durationSec = fin.durationSec
     local total = saved.lastTotal or 0
-    if total <= 0 then return end -- forces never readable this run: nothing raceable to keep
 
     -- Whole-second quantization happens HERE, once (integers for facts, floats for
     -- rendering — DESIGN "Count-space storage"): live RAM ran on GetTime floats, the
@@ -640,31 +674,36 @@ function R:OnKeyEnd()
     for _, d in ipairs(saved.deaths or {}) do d[1] = rnd(d[1]) end
     local bossCounts = {}
     for i = 1, nBosses do bossCounts[i] = rnd(saved.bossCounts[i] or 0) end
-    local pullTimes = saved.route and KG.PullTrack:GetPullTimes() or nil
-    if pullTimes then
-        for k, v in pairs(pullTimes) do pullTimes[k] = rnd(v) end
+    local function quantized(stamps)
+        if not stamps then return nil end
+        for k, v in pairs(stamps) do stamps[k] = rnd(v) end
+        return stamps
     end
+    local pullTimes = saved.route and quantized(KG.PullTrack:GetPullTimes()) or nil
+    local pullFirstForces = saved.route and quantized(KG.PullTrack:GetPullFirstForces()) or nil
 
-    local stored = KG.Ghosts:Save({
+    return {
         clockV = 2, -- official-timer clock (post countdown-hold fix)
         total = total, -- the dungeon's forces requirement at record time (count units)
         durationSec = durationSec,
-        completedAt = S:ServerNow(), -- server epoch: client clocks lie
-        week = S:WeekEndEpoch(), -- reset-week identity ("reset best" seed, 2026-07-21)
+        completedAt = fin.completedAt,
+        week = fin.week,
         player = saved.player, -- exporter context, captured at key start
         season = saved.season,
         affixes = saved.affixes,
-        party = S:GetPartyContext(), -- ratings at completion
-        level = level,
+        region = saved.region, -- the party's account region, captured at key start
+        party = fin.party,
+        level = fin.level,
         mapID = saved.mapID,
-        chests = chests,
+        chests = fin.chests,
         parTimeSec = saved.parTimeSec,
         deathCount = saved.deathCount,
         deaths = saved.deaths,
         routeName = saved.routeName,
         routeHash = saved.route and saved.route.hash or nil, -- Route Store reference
         nPulls = saved.route and saved.route.nPulls or nil,
-        pullTimes = pullTimes,
+        pullTimes = pullTimes, -- when each pull was FINISHED (DATA-DICTIONARY)…
+        pullFirstForces = pullFirstForces, -- …and when its first mob died
         snapshots = snaps,
         bossKills = kills,
         bossNames = saved.bossNames,
@@ -672,16 +711,7 @@ function R:OnKeyEnd()
         bossIDs = saved.bossIDs,
         bossJIDs = saved.bossJIDs,
         bossEngages = engages,
-    })
-    KG.db.lastRecorded = { mapID = saved.mapID, level = level } -- default /kg export target
-    if stored and saved.route and saved.route.hash and saved.route.pulls then
-        KG.Ghosts:StoreRoute(saved.route) -- the run's route as it was AT KEY START
-    end
-    if stored then
-        print(string.format("|cff88ccffKeystoneGhost|r: run saved as %s ghost (+%d, %s).",
-            KG.Math.TierLabel(chests), level, KG.Math.FormatClock(durationSec)))
-        R:StartPartySpecSweep()
-    end
+    }
 end
 
 --- ── Party spec backfill (best-effort) ────────────────────────────────────────
