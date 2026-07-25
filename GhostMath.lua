@@ -274,16 +274,22 @@ function M.CleanRun(raw)
     local nPulls = tonumber(raw.nPulls)
     if nPulls and nPulls >= 1 and nPulls <= 500 then
         out.nPulls = math.floor(nPulls)
-        if type(raw.pullTimes) == "table" then
+        -- Sparse index→time maps: index inside the route, time inside the run.
+        local function pullStamps(t)
+            if type(t) ~= "table" then return nil end
             local pt = {}
-            for k, v in pairs(raw.pullTimes) do
+            for k, v in pairs(t) do
                 local ki, vt = tonumber(k), tonumber(v)
                 if ki and vt and ki >= 1 and ki <= out.nPulls and vt >= 0 and vt <= dur + 60 then
                     pt[math.floor(ki)] = vt
                 end
             end
-            out.pullTimes = pt
+            return pt
         end
+        -- `pullTimes` holds COMPLETION times despite the name (docs/DATA-DICTIONARY.md);
+        -- `pullFirstForces` is the pull's opening kill. Both sparse, both optional.
+        out.pullTimes = pullStamps(raw.pullTimes)
+        out.pullFirstForces = pullStamps(raw.pullFirstForces)
     end
 
     if type(raw.deaths) == "table" and #raw.deaths <= 300 then
@@ -858,6 +864,13 @@ function M.ConvertRioReplay(replay, opts)
     local finalT = math.max(math.ceil(durationSec), lastT)
     if finalT > lastT then node(finalT, cum, bosses) end
 
+    -- No `region` here, deliberately (checked 2026-07-25): the replay object carries
+    -- no region field — id, name, short_name, total_enemy_forces is the whole dungeon
+    -- block — and no roster at all, so a converted replay has nobody to build a
+    -- region-first profile link FOR. The only region available would be the local
+    -- account's, which is an inference about someone else's run (a watched replay can
+    -- be anyone's), and stamping it would be inventing provenance. Their `run_url`
+    -- already carries the run's own identity; that is what `rioUrl` stores.
     local raw = {
         legacy = "RIO",
         mapID = mapID,
