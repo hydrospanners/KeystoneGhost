@@ -342,7 +342,7 @@ local function AcquireRow(i)
     row.rioMark:SetScript("OnClick", function(self)
         local url = self.row and self.row.run and self.row.run.rioUrl
         if url then
-            StaticPopup_Show("KEYSTONEGHOST_LINK", nil, nil, url)
+            KG.ShowCopy("LINK", url)
         else
             -- Honest no-op (his silent-click report 2026-07-21): ghosts banked
             -- before the link update carry no URL until a re-sight backfills it.
@@ -356,7 +356,7 @@ local function AcquireRow(i)
         local r = self.row
         local str, err = KG.Ghosts:ExportString(r.mapID, r.level, r.charKey, r.tier)
         if str then
-            StaticPopup_Show("KEYSTONEGHOST_EXPORT", nil, nil, str)
+            KG.ShowCopy("EXPORT", str)
         else
             print("|cff88ccffKeystoneGhost|r: export failed — " .. (err or "unknown error"))
         end
@@ -530,20 +530,57 @@ local function BuildFrame()
     bottomSep:SetPoint("BOTTOMLEFT", 1, BOTTOM_H)
     bottomSep:SetPoint("BOTTOMRIGHT", -3, BOTTOM_H)
 
-    local import = CreateFrame("Button", nil, frame, "BackdropTemplate")
-    import:SetSize(110, 22)
+    local function BarButton(width, label, tip, onClick)
+        local b = CreateFrame("Button", nil, frame, "BackdropTemplate")
+        b:SetSize(width, 22)
+        b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+        b:SetBackdropColor(0.16, 0.16, 0.20, 0.9)
+        b:SetBackdropBorderColor(0.29, 0.29, 0.33, 1)
+        b.text = b:CreateFontString(nil, "OVERLAY")
+        Style.SetFont(b.text, 11)
+        b.text:SetPoint("CENTER")
+        b.text:SetText(label)
+        b:SetScript("OnEnter", function(self)
+            self:SetBackdropBorderColor(Style.GetAccent())
+            if tip then
+                GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                GameTooltip:SetText(tip[1])
+                for i = 2, #tip do GameTooltip:AddLine(tip[i], 0.9, 0.9, 0.9, true) end
+                GameTooltip:Show()
+            end
+        end)
+        b:SetScript("OnLeave", function(self)
+            self:SetBackdropBorderColor(0.29, 0.29, 0.33, 1)
+            GameTooltip:Hide()
+        end)
+        b:SetScript("OnClick", onClick)
+        return b
+    end
+
+    local import = BarButton(110, "Import ghost…", nil,
+        function() StaticPopup_Show("KEYSTONEGHOST_IMPORT") end)
     import:SetPoint("BOTTOMLEFT", PAD, (BOTTOM_H - 22) / 2)
-    import:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    import:SetBackdropColor(0.16, 0.16, 0.20, 0.9)
-    import:SetBackdropBorderColor(0.29, 0.29, 0.33, 1)
-    import.text = import:CreateFontString(nil, "OVERLAY")
-    Style.SetFont(import.text, 11)
-    import.text:SetPoint("CENTER")
-    import.text:SetText("Import ghost…")
-    import:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(Style.GetAccent()) end)
-    import:SetScript("OnLeave", function(self) self:SetBackdropBorderColor(0.29, 0.29, 0.33, 1) end)
-    import:SetScript("OnClick", function() StaticPopup_Show("KEYSTONEGHOST_IMPORT") end)
+
+    -- The portal door (his flow, 2026-07-26: "click Open my library online,
+    -- click a button, get a potentially huge URL that I paste into the browser").
+    -- Whole library only — one dungeon at a time exists in Ghosts:CollectLibrary
+    -- but has no button yet (DESIGN: deferred, not forgotten).
+    local online = BarButton(150, "Open my library online",
+        { "Open my library online",
+            "Copies a link that loads every stored ghost in your browser. Paste it in the address bar.",
+            "Runs you have opened before are not duplicated — new ones fill in." },
+        function()
+            local url, err, n = KG.Ghosts:ExportLibraryURL()
+            if url then
+                KG.ShowCopy("LIBRARY", url)
+                print(string.format("|cff88ccffKeystoneGhost|r: %d ghost%s in the link.",
+                    n, n == 1 and "" or "s"))
+            else
+                print("|cff88ccffKeystoneGhost|r: " .. (err or "nothing to open online yet."))
+            end
+        end)
+    online:SetPoint("LEFT", import, "RIGHT", 8, 0)
 
     frame.footer = frame:CreateFontString(nil, "OVERLAY")
     Style.SetFont(frame.footer, 10)

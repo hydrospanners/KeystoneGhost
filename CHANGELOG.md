@@ -2,6 +2,31 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.11.0] - 2026-07-26
+
+- A dungeon with no MDT route raced against the wrong one. MDT gives every
+  dungeon you have opened an empty starter route, and the addon took that for a
+  real one — so whatever name was sitting in that slot rode along on the bar with
+  nothing behind it, and every pull read as already done. An empty route is no
+  route now, and a route filed under another dungeon is refused.
+- `/kg route` no longer hands MDT a route from a different dungeon while you are
+  standing in one. Outside a dungeon it still offers your last import.
+- The bar is a little taller so your icon has its own lane above the road. It
+  used to share that band with the count number, which is why standing at the
+  end of the road covered it — with a raid marker on your head, completely.
+  Should the numbers and the icon still meet (big text, small bar), the numbers
+  slide out of the way and glide back when you move on.
+- The pace cars are labelled +3, +2 and +1, just left of each line. Three
+  identical hairlines told you nothing about which one was about to pass you.
+- The +1 car drags a red hatched trail behind it — the road it has taken.
+- New button in the Ghost Library: "Open my library online". It copies a link
+  that loads every ghost you have stored into your browser. Ghosts you have
+  opened before won't duplicate — only the new ones fill in. The page it points
+  at isn't built yet, so the link goes nowhere for now.
+- The copy popup is a real window now. Same selected-text-and-Ctrl+C, but the
+  box fits more than one line, and there's a "Close on copy" tickbox if you'd
+  rather it stayed open. Ghost strings and raider.io links both use it.
+
 ## [0.10.3] - 2026-07-25
 
 - The account region never actually reached a saved run. It was read at the

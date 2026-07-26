@@ -170,6 +170,58 @@ function Style.CloseButton(parent, onClick)
     return close
 end
 
+--- The house checkbox: a small bordered box with an accent fill when ticked,
+--- plus a label, wearing the Library Import button's chrome. Hand-rolled on
+--- purpose — Blizzard's UICheckButtonTemplate hangs its label off `$parentText`,
+--- which an unnamed frame cannot resolve, and the ticked state is a filled
+--- square rather than a glyph so it can never depend on the font carrying "✓".
+--- `get` is re-read by :Refresh(); `set` receives the new boolean.
+function Style.CheckBox(parent, label, get, set)
+    local BOX, GAP = 14, 5
+    local IDLE = { 0.63, 0.63, 0.66 }
+    local b = CreateFrame("Button", nil, parent)
+    b:SetHeight(BOX)
+
+    local box = CreateFrame("Frame", nil, b, "BackdropTemplate")
+    box:SetSize(BOX, BOX)
+    box:SetPoint("LEFT")
+    box:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    box:SetBackdropColor(0.16, 0.16, 0.20, 0.9)
+    box:SetBackdropBorderColor(0.29, 0.29, 0.33, 1)
+
+    local fill = box:CreateTexture(nil, "OVERLAY")
+    fill:SetTexture("Interface\\Buttons\\WHITE8x8")
+    fill:SetPoint("TOPLEFT", 3, -3)
+    fill:SetPoint("BOTTOMRIGHT", -3, 3)
+
+    local text = b:CreateFontString(nil, "OVERLAY")
+    Style.SetFont(text, 10)
+    text:SetPoint("LEFT", box, "RIGHT", GAP, 0)
+    text:SetText(label)
+    text:SetTextColor(IDLE[1], IDLE[2], IDLE[3])
+    b:SetWidth(BOX + GAP + text:GetStringWidth() + 2)
+
+    function b:Refresh()
+        fill:SetColorTexture(Style.GetAccent())
+        fill:SetShown(get() and true or false)
+    end
+    b:SetScript("OnClick", function(self)
+        set(not get())
+        self:Refresh()
+    end)
+    b:SetScript("OnEnter", function()
+        box:SetBackdropBorderColor(Style.GetAccent())
+        text:SetTextColor(0.95, 0.95, 0.98)
+    end)
+    b:SetScript("OnLeave", function()
+        box:SetBackdropBorderColor(0.29, 0.29, 0.33, 1)
+        text:SetTextColor(IDLE[1], IDLE[2], IDLE[3])
+    end)
+    b:Refresh()
+    return b
+end
+
 -- Panel chrome recipe (single source — SkinPanel applies, RefreshPanel re-applies).
 local PANEL_BG = { 0.05, 0.04, 0.08, 0.85 }
 local PANEL_BORDER = { 0.15, 0.15, 0.15, 0.6 }
