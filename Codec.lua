@@ -300,11 +300,72 @@ function Codec.BuildPayload(run, exporter, version, route, shareTag)
     }
 end
 
+-- ── The library URL (the portal door, DESIGN "Library export → the portal") ───
+--
+-- Same format GENERATION (v=2) and the same packed runs as a single-ghost
+-- payload — only the envelope differs: `library = true` plus a `runs` ARRAY.
+-- Each entry carries its OWN exporter because a library spans alts, and
+-- stamping the clicking character on all of them would erase which alt ran
+-- what. `routes` is the referenced slice of the Route Store keyed by hash, so a
+-- route shared by five runs travels once.
+--
+-- The payload rides in the URL FRAGMENT: fragments never reach a server, so the
+-- ~8 KB request-line limit that would kill a query string does not apply, and
+-- the portal decodes client-side.
+-- A DEDICATED route, not the app root (Fredrik 2026-07-26). This string is
+-- frozen into every shipped zip: an install that never updates keeps emitting
+-- it forever, so the portal owns a redirect at this path and can move the app
+-- whenever it likes. Redirects carry the fragment automatically as long as the
+-- target has no fragment of its own — which is why the payload must never be
+-- moved into a query parameter.
+Codec.PORTAL_URL = "https://hydrospanners.com/keystone-ghost/import"
+
+--- Percent-encode everything outside RFC 3986 unreserved. Measured on a real
+--- 40-ghost library: 96.6% of the print alphabet passes through untouched —
+--- only "(", ")" and "!" ever escape, about +7% length.
+function Codec.UrlEscape(s)
+    return (tostring(s):gsub("[^A-Za-z0-9%-%._~]", function(c)
+        return string.format("%%%02X", c:byte())
+    end))
+end
+
+--- entries = { { exporter = charKey, run = run }, ... } → the library payload.
+function Codec.BuildLibraryPayload(entries, version, routes, shareTag)
+    local S = KG.Scenario
+    local out = {
+        v = 2,
+        kgv = version,
+        library = true,
+        exportedAt = (S and S.ServerNow and S:ServerNow()) or (time and time() or 0),
+        shareTag = shareTag,
+        runs = {},
+        routes = routes,
+    }
+    for i = 1, #entries do
+        out.runs[i] = { exporter = entries[i].exporter, run = PackRun(entries[i].run) }
+    end
+    return out
+end
+
+--- Library payload → the pasteable URL, or nil, err.
+function Codec.LibraryURL(payload)
+    local str, err = Codec.Export(payload)
+    if not str then return nil, err end
+    return Codec.PORTAL_URL .. "#" .. Codec.UrlEscape(str)
+end
+
 --- Validate a decoded payload → clean run, exporter name, nil, exporter's addon
 --- version, sanitized route data (nil when absent or malformed — a bad route never
 --- sinks the ghost import), sanitized shareTag — or nil, nil, error.
 function Codec.ValidatePayload(payload)
     if type(payload) ~= "table" then return nil, nil, "unsupported version" end
+    -- A library payload decodes cleanly here but carries no single run, so the
+    -- generic path would fail it as "invalid run data". Someone WILL paste the
+    -- portal link into the import box; say what it actually is.
+    if payload.library then
+        return nil, nil,
+            "that's a whole-library link for the web viewer — paste the link in your browser, and paste a single ghost's export string here"
+    end
     local v = tonumber(payload.v)
     if not v or not Codec.SUPPORTED_FORMATS[v] then
         if v and v > MaxSupportedFormat() then

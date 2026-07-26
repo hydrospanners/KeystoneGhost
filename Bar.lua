@@ -27,8 +27,23 @@ KG.Bar = Bar
 -- ghost-owned marks on the track's bottom edge and below it (flowing toward the ghost
 -- roster panel underneath), full track height reserved for Relationship (cursor lines,
 -- gap zone) and course-wide elements (pace cars, finish line).
-local WIDTH, BAR_H, TRACK_H, PAD = 360, 96, 16, 12
+local WIDTH, BAR_H, TRACK_H, PAD = 360, 115, 16, 12
+-- MARIO'S OWN LANE (Fredrik 2026-07-27, option C1 — alternatives in
+-- docs/UNTESTED.md's decision log): his icon stands in the 18 px band directly
+-- above the track, and the Count Gap used to be printed in that same band, which
+-- is why a raid marker sat on the numbers. The track drops to 57 (frame grew 96 →
+-- 115) so the band belongs to him alone; the readouts keep their frame-top
+-- positions, which is what NUM_TOP_Y / NUM_SUB_Y hold — PlaceNumbers anchors from
+-- the track, so they are converted, never hardcoded twice.
+local TRACK_Y, NUM_TOP_Y, NUM_SUB_Y = 57, 4, 20
 local frame
+
+-- Out-of-bounds hatching, bundled rather than borrowed (32x32, tileable, 45°): the
+-- road behind the Sweeper wears it in the Sweeper's red. (A grey run-off wall wore it
+-- too for a day; that is gone, this is not.)
+local HATCH = "Interface\\AddOns\\KeystoneGhost\\sweeper-stripes.tga"
+local HATCH_TILE = 32
+local SWEPT_WAKE = 0.13 -- the sweeper's red wake, as a fraction of the track (~44 px)
 
 -- Style.GREEN / Style.RED / Splits-grey as inline escapes — for coloring single
 -- tokens inside an otherwise neutral FontString.
@@ -416,17 +431,17 @@ local function Build()
     frame.refLabel:SetTextColor(Style.TEXT[1], Style.TEXT[2], Style.TEXT[3])
 
     frame.delta = frame:CreateFontString(nil, "OVERLAY")
-    frame.delta:SetPoint("TOPRIGHT", -PAD - 3, -4)
+    frame.delta:SetPoint("TOPRIGHT", -PAD - 3, -NUM_TOP_Y)
     Style.SetFont(frame.delta, 13)
 
     -- Count delta lives directly under the time delta (one glance, both dimensions).
     frame.subDelta = frame:CreateFontString(nil, "OVERLAY")
-    frame.subDelta:SetPoint("TOPRIGHT", -PAD - 3, -20)
+    frame.subDelta:SetPoint("TOPRIGHT", -PAD - 3, -NUM_SUB_Y)
     Style.SetFont(frame.subDelta, 10)
 
     frame.track = CreateFrame("Frame", nil, frame)
-    frame.track:SetPoint("TOPLEFT", PAD, -38)
-    frame.track:SetPoint("TOPRIGHT", -PAD, -38) -- width follows the frame (attach mode resizes it)
+    frame.track:SetPoint("TOPLEFT", PAD, -TRACK_Y)
+    frame.track:SetPoint("TOPRIGHT", -PAD, -TRACK_Y) -- width follows the frame (attach mode resizes it)
     frame.track:SetHeight(TRACK_H)
     local bg = frame.track:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
@@ -436,11 +451,44 @@ local function Build()
 
     -- Pace cars: moving marks that drive the road at +3 / +2 / +1 (par) pace — colors
     -- and positions applied per update. On a road there are no static time positions.
+    -- Each carries its tag inside the track: three identical hairlines told you
+    -- nothing about which was which ("I can't tell what they are" — Fredrik 2026-07-26).
     frame.paceCars = {
         HoverTick(frame.track, Style.TICK1, 0.4),
         HoverTick(frame.track, Style.TICK1, 0.4),
         HoverTick(frame.track, Style.TICK1, 0.4),
     }
+    for _, car in ipairs(frame.paceCars) do
+        car.label = car:CreateFontString(nil, "OVERLAY")
+        Style.SetFont(car.label, 9)
+        -- Placed per update: normally "+1 |", to the LEFT of the hairline (Fredrik
+        -- 2026-07-26 — on the line it was unreadable), flipping to the right only
+        -- when the car is pinned at the left edge and there is no room.
+    end
+
+    -- THE SWEPT ROAD (Fredrik 2026-07-26, and the only survivor of the run-off wall
+    -- it was built alongside — "leave the striped area after the last pace car"): a
+    -- diagonal hatch in the Sweeper's own red, on the road BEHIND the +1 car — the
+    -- ground it has just taken, fading out backwards.
+    --
+    -- A WAKE, not a fill: filling everything left of the sweeper was the first build
+    -- and by the end of a dungeon it painted more than half the track red on a run
+    -- that was three minutes AHEAD, competing with the gap zone for the same alarm.
+    -- It also said nothing the car's own position doesn't — your course only ever
+    -- increases, so swept road behind you can't be re-entered. Bounded, it reads as
+    -- the sweeper eating the road. Under the gap zone in draw order: the verdict
+    -- color stays the loudest thing on the track.
+    --
+    -- The art is a BUNDLED 32x32 TGA, not a guessed Blizzard atlas — our own file
+    -- cannot turn out to be invisible on a live client, and the track has no other
+    -- diagonal art to borrow. Tiled via REPEAT wrap + texcoords at 1:1 pixel scale,
+    -- so the stripes hold 45° whatever width the bar is docked at.
+    frame.sweptZone = frame.track:CreateTexture(nil, "BACKGROUND", nil, 3)
+    frame.sweptZone:SetTexture(HATCH, "REPEAT", "REPEAT")
+    frame.sweptZone._faint = CreateColor(0.9, 0.35, 0.35, 0.12)
+    frame.sweptZone._strong = CreateColor(0.9, 0.35, 0.35, 0.9)
+    frame.sweptZone:SetGradient("HORIZONTAL", frame.sweptZone._faint, frame.sweptZone._strong)
+    frame.sweptZone:Hide()
     frame.bossTicks = {}
     frame.runners = {} -- roster ghosts drawn as small racers below the line
 
@@ -743,6 +791,52 @@ function Bar.ApplyScale()
     if splits then splits:SetScale(s) end
 end
 
+--- END MODE (Fredrik 2026-07-27): the delta + Count Gap block lives in the frame's
+--- top-right corner, which is directly above the end of the road — so Mario, parked
+--- at the finish line through a long last boss fight, stands on top of it (his two
+--- screenshots: "+0.0%" clipped live, and the Photo's wider "13:04 · +3" mostly gone).
+--- THE NUMBERS MOVE, and that is the whole fix — "skip the grey, move the numbers
+--- only". The run-off wall that was tried first (a hatched no-go strip the road
+--- stopped short of, so Mario stopped short too) is gone by his call; it was scenery
+--- charging rent for a job 15 px of text motion does.
+--- SECOND ROUND (Fredrik 2026-07-27, screenshot: his icon wearing a blue square raid
+--- marker sitting on the Count Gap): the one 18 px step end mode used to take is a
+--- guess made once, so it under-shoots a wide number block and moves the numbers on
+--- runs where nothing was ever in the way. Mario now PUSHES them: the block yields
+--- only while his icon actually overlaps it, by exactly the distance needed, and
+--- glides back the moment he walks on. His zone is directly above the track and the
+--- numbers live in that same band, so the overlap is real geometry, not a fudge.
+--- `marioX` is the icon's center in track space (nil = nothing to yield to).
+--- Still clamped so the block never backs into the "vs <ghost>" label on a narrow
+--- (docked) bar, and eased so a camera jump can't make the text flick.
+local ICON_HALF, YIELD_GAP = 10, 6
+local function PlaceNumbers(marioX)
+    local W = frame.track:GetWidth() or WIDTH
+    local home = W - 3
+    local rightEdge = home
+    if marioX then
+        local numW = math.max(frame.delta:GetStringWidth() or 0,
+            frame.subDelta:GetStringWidth() or 0)
+        -- Overlap test in x: the block spans [home - numW, home], the icon
+        -- [marioX ± ICON_HALF]. Only an icon reaching into that span moves anything.
+        if marioX + ICON_HALF > home - numW - YIELD_GAP then
+            rightEdge = math.max(marioX - ICON_HALF - YIELD_GAP,
+                (frame.refLabel:GetStringWidth() or 0) + 8 + numW)
+            rightEdge = math.min(rightEdge, home)
+        end
+    end
+    -- Ease toward the target; snap on big jumps (bar resize, run change, first frame).
+    local cur = frame._smEdge
+    if cur and math.abs(cur - rightEdge) > 1 and math.abs(cur - rightEdge) < 120 then
+        rightEdge = cur + (rightEdge - cur) * 0.35
+    end
+    frame._smEdge = rightEdge
+    frame.delta:ClearAllPoints()
+    frame.delta:SetPoint("TOPRIGHT", frame.track, "TOPLEFT", rightEdge, TRACK_Y - NUM_TOP_Y)
+    frame.subDelta:ClearAllPoints()
+    frame.subDelta:SetPoint("TOPRIGHT", frame.track, "TOPLEFT", rightEdge, TRACK_Y - NUM_SUB_Y)
+end
+
 local function BossTick(i)
     local f = frame.bossTicks[i]
     if not f then
@@ -807,9 +901,12 @@ function Bar:Update()
         local v = vx(course)
         return (v < 0 and -1) or (v > 1 and 1) or 0
     end
-
-    -- Finish line: scrolls in from the right during the final stretch.
-    if vx(1) <= 1.001 then
+    -- Finish line: scrolls in from the right during the final stretch, and the camera
+    -- stops with it. Its arrival is also END MODE — the numbers step aside for the
+    -- icon that is about to park on the line (PlaceNumbers, applied below once their
+    -- text is set: its clamp needs the string widths). One flip per run.
+    local endMode = vx(1) <= 1.001
+    if endMode then
         frame.finishLine:ClearAllPoints()
         frame.finishLine:SetPoint("LEFT", frame.track, "LEFT", px(1) - 1, 0)
         frame.finishLine:Show()
@@ -821,19 +918,62 @@ function Bar:Update()
     -- is the sweeper — if it passes you, the key depletes. +2/+3 cars are optional.
     if st.par and st.par > 0 and st.elapsed then
         local cars = { { 0.6, "+3" }, { 0.8, "+2" }, { 1.0, "+1" } }
-        for i = 1, 3 do
+        -- Tags are drawn SWEEPER FIRST (i = 3 → 1, which is also left → right): early
+        -- in a run all three cars are bunched at the start line, and when they overlap
+        -- the one whose identity matters is the +1.
+        local tagged = {}
+        for i = 3, 1, -1 do
             local frac, tag = cars[i][1], cars[i][2]
             local f = frame.paceCars[i]
             if tag == "+1" or KG.db.chestTicks ~= false then
                 local carCourse = st.elapsed / (st.par * frac)
                 local dim = pinned(carCourse) ~= 0 and 0.5 or 1 -- lurking at an edge
+                local cx = px(carCourse)
                 f:ClearAllPoints()
-                f:SetPoint("CENTER", frame.track, "LEFT", px(carCourse), 0)
+                f:SetPoint("CENTER", frame.track, "LEFT", cx, 0)
+                local cr, cg, cb, ca
                 if tag == "+1" then
-                    f.tex:SetVertexColor(0.9, 0.35, 0.35, 0.8 * dim) -- the sweeper
+                    cr, cg, cb, ca = 0.9, 0.35, 0.35, 0.8 -- the sweeper
+                    -- The swept road: red hatch on the ground it has just taken.
+                    local z = frame.sweptZone
+                    local wake = math.min(cx, W * SWEPT_WAKE)
+                    if wake > 2 then
+                        z:ClearAllPoints()
+                        z:SetPoint("TOPLEFT", frame.track, "TOPLEFT", cx - wake, 0)
+                        z:SetPoint("BOTTOMLEFT", frame.track, "BOTTOMLEFT", cx - wake, 0)
+                        z:SetWidth(wake)
+                        -- Texcoords in TRACK space, so the stripes stand still and the
+                        -- wake slides over them instead of dragging them along.
+                        z:SetTexCoord((cx - wake) / HATCH_TILE, cx / HATCH_TILE,
+                            0, TRACK_H / HATCH_TILE)
+                        z:Show()
+                    else
+                        z:Hide()
+                    end
                 else
-                    f.tex:SetVertexColor(0.85, 0.85, 0.85, 0.45 * dim)
+                    cr, cg, cb, ca = 0.85, 0.85, 0.85, 0.45
                 end
+                f.tex:SetVertexColor(cr, cg, cb, ca * dim)
+                -- The tag stands "+1 |" — directly LEFT of the hairline, in the car's
+                -- own color. It flips to the right side only when the car is against
+                -- the track's left edge, where there is nothing to the left of it.
+                -- Suppressed when a neighbour's tag already stands within 15 px: two
+                -- tags on one spot are less readable than one.
+                local clear = true
+                for _, tx in ipairs(tagged) do
+                    if math.abs(cx - tx) < 15 then clear = false break end
+                end
+                f.label:ClearAllPoints()
+                if cx < 18 then
+                    f.label:SetPoint("TOPLEFT", f, "TOP", 3, -3)
+                else
+                    f.label:SetPoint("TOPRIGHT", f, "TOP", -3, -3)
+                end
+                f.label:SetText(tag)
+                f.label:SetTextColor(cr, cg, cb)
+                f.label:SetAlpha(math.min(1, ca + 0.2) * dim)
+                f.label:SetShown(clear)
+                if clear then tagged[#tagged + 1] = cx end
                 f.tip = {
                     tag .. " pace car",
                     "Finishes in exactly " .. M.FormatClock(st.par * frac),
@@ -847,6 +987,7 @@ function Bar:Update()
         end
     else
         for i = 1, 3 do frame.paceCars[i]:Hide() end
+        frame.sweptZone:Hide() -- no par, no sweeper, no swept road
     end
 
     -- Boss names: prefer the ghost's own recording; the live recorder's names cover
@@ -1316,6 +1457,9 @@ function Bar:Update()
     frame.subDelta:SetTextColor(cc[1], cc[2], cc[3])
 
     frame.refLabel:SetText("vs " .. (ref.label or "?"))
+    -- Both texts are set: the numbers can take their place — they measure themselves
+    -- and step aside for exactly as much of Mario as is actually in the way.
+    PlaceNumbers(exV)
 
     -- Pull position (needs an MDT route matching this dungeon): you vs the ghost. Your
     -- side uses the stateful tracker (boss criteria + thresholds — APL's model); the
@@ -1472,8 +1616,6 @@ end
 function Bar:ShowSummary(s)
     Style.RefreshPanel(frame)
     frame.refLabel:SetText("vs " .. (s.label or "—"))
-    frame.delta:ClearAllPoints()
-    frame.delta:SetPoint("TOPRIGHT", -22, -4) -- make room for the close button
     if s.diff then
         local c = (s.diff >= 0) and Style.GREEN or Style.RED
         frame.delta:SetText(M.FormatDelta(s.diff))
@@ -1484,6 +1626,13 @@ function Bar:ShowSummary(s)
     local aR, aG, aB = Style.GetAccent()
     frame.subDelta:SetText(M.FormatClock(s.finalTime or 0) .. " · " .. M.TierLabel(s.chests))
     frame.subDelta:SetTextColor(aR, aG, aB)
+    -- The photo is permanently "at the end", so the numbers stand aside from the
+    -- podium — this readout is the widest one in the addon ("13:04 · +3"), and it is
+    -- the one his screenshot caught hiding behind Mario. Stepping left of the podium
+    -- clears the close button in the corner too. Mario parks at W - 4 below, and the
+    -- yield is measured from there; no easing in a photograph.
+    frame._smEdge = nil
+    PlaceNumbers((frame.track:GetWidth() or WIDTH) - 4)
     frame.pullText:Hide()
     for i = 1, #frame.runners do frame.runners[i]:Hide() end
     if frame.deathMarks then
@@ -1493,15 +1642,16 @@ function Bar:ShowSummary(s)
         for i = 1, #frame.ghostMarks do frame.ghostMarks[i]:Hide() end
     end
     for i = 1, 3 do frame.paceCars[i]:Hide() end
+    frame.sweptZone:Hide() -- the race is over; nothing is chasing you in the photo
     if frame.walkAnim:IsPlaying() then frame.walkAnim:Stop() end -- parked on the podium
     if frame.dazedAnim:IsPlaying() then frame.dazedAnim:Stop() end
     if frame.ghostDazed:IsPlaying() then frame.ghostDazed:Stop() end -- both runners still for the photo
     frame._kb, frame._kbPot, frame._lastDeathCount, frame._lastTimeLost = nil, nil, nil, nil -- no knockback residue in the photo
 
     -- The finish photo (full-road view, no camera).
+    local W = frame.track:GetWidth() or WIDTH
     local ref = s.ref
     if ref and ref.run then
-        local W = frame.track:GetWidth() or WIDTH
         frame.finishLine:ClearAllPoints()
         frame.finishLine:SetPoint("LEFT", frame.track, "LEFT", W - 2, 0)
         frame.finishLine:Show()
@@ -1555,9 +1705,7 @@ function Bar:Refresh()
     -- gated); this stands the DISPLAY down. Splits follows via bar:IsShown().
     if KG.Scenario:InRaidInstance() and not KG.editModePreview then frame:Hide(); return end
     if KG.testMode or KG.editModePreview or (KG.Recorder:IsActive() and KG.Recorder.currentRef) then
-        frame.closeBtn:Hide()
-        frame.delta:ClearAllPoints()
-        frame.delta:SetPoint("TOPRIGHT", -PAD - 3, -4)
+        frame.closeBtn:Hide() -- the number block places itself (PlaceNumbers)
         Bar:Update()
     elseif KG.Recorder.summary then
         Bar:ShowSummary(KG.Recorder.summary)

@@ -237,8 +237,14 @@ function Route:GetForChallengeMap(challengeMapID)
     local byDungeon = type(mdtDb.presets) == "table" and mdtDb.presets[dIdx] or nil
     local preset = presetIdx and type(byDungeon) == "table" and byDungeon[presetIdx] or nil
     if type(preset) ~= "table" then return nil end
-    local pulls = type(preset.value) == "table" and preset.value.pulls or nil
+    local value = type(preset.value) == "table" and preset.value or nil
+    local pulls = value and value.pulls or nil
     if type(pulls) ~= "table" or #pulls == 0 then return nil end
+    -- A preset names the dungeon it was drawn for, and that name outranks the list it
+    -- sits in: a preset filed under the wrong dungeon (import from another MDT
+    -- version, a preset list that drifted) must never become this key's route.
+    local presetDungeon = value and tonumber(value.currentDungeonIdx)
+    if presetDungeon and presetDungeon ~= dIdx then return nil end
 
     local cumulativeForces, bossPull = {}, {}
     local okAll = pcall(function()
@@ -248,6 +254,12 @@ function Route:GetForChallengeMap(challengeMapID)
         end
     end)
     if not okAll or #cumulativeForces == 0 then return nil end
+    -- "No route" never reaches us as an absence: MDT hands every dungeon you have
+    -- ever OPENED a Default preset and guarantees it holds at least one pull, empty
+    -- or not (UpdateToDungeon). A preset with no enemies in it has nothing to track,
+    -- so it is not a route — without this the Pull Indicator raced a zero-forces
+    -- table and every pull read as already done.
+    if (cumulativeForces[#cumulativeForces] or 0) <= 0 then return nil end
 
     local name = preset.text
     local out = {

@@ -71,10 +71,13 @@ function G:RouteForHash(hash)
 end
 
 --- The most recently imported ghost's Route Store entry (/kg route outside a key —
---- the receiver wants the route BEFORE stepping into the dungeon).
-function G:LastImportedRoute()
+--- the receiver wants the route BEFORE stepping into the dungeon). `wantMapID`
+--- (given whenever we know which dungeon is meant) fences it to that dungeon: the
+--- last import is a fallback, never a reason to hand MDT another dungeon's route.
+function G:LastImportedRoute(wantMapID)
     local li = KG.db.lastImported
     if not li then return nil end
+    if wantMapID and li.mapID ~= wantMapID then return nil end
     local byMap = KG.db.runs[li.char]
     local tiers = byMap and byMap[li.mapID] and byMap[li.mapID][li.level]
     if not tiers then return nil end
@@ -644,21 +647,18 @@ end
 --- selection can be captured): "route data" embeds the Route Store entry for
 --- click-to-load; "route name" off strips name AND creator everywhere (anonymous
 --- route). The stored run is never mutated — name-off exports a shallow copy.
-function G:ExportString(mapID, level, charKey, tier)
-    local tiers = select(1, RunsFor(charKey or KG.CharacterKey(), mapID, level, false))
-    local run = tiers and ((tier and tier >= 1 and tiers[tier]) or M.BestRun(tiers, 1))
-    if not run or not run.snapshots then return nil, "no timed ghost recorded for that dungeon/level" end
-    if run.legacy == "RIO" then
-        -- The one choke point every share door funnels through (Library button,
-        -- shift-clicks, /kg export, Comm answers): a guild best is not yours to
-        -- re-export under your name, and the cache re-serves it live anyway.
-        return nil, "Raider.IO ghosts can't be shared"
-    end
+--- The local-preference shaping every export door shares (share string AND the
+--- library URL): the two route toggles and the party-name opt-in. Returns the
+--- run to export plus its route entry (nil when route data is off or absent).
+--- The stored run is NEVER mutated — each toggle that fires works on a shallow
+--- copy. Party names are export-OPT-IN (default OFF — Fredrik 2026-07-20): the
+--- anonymized copy keeps class/role/spec/rating so receivers still see
+--- "RShaman 3433"-grade context via GhostMath.PartyMemberLabel.
+local function ShapeForExport(run)
     local db = KG.db
-    local shareName = db.shareRouteName ~= false
     local route = db.shareRouteData ~= false and run.routeHash
         and db.routes and db.routes[run.routeHash] or nil
-    if not shareName then
+    if db.shareRouteName == false then
         if route then
             local rc = {}
             for k, v in pairs(route) do rc[k] = v end
@@ -672,18 +672,92 @@ function G:ExportString(mapID, level, charKey, tier)
             run = copy
         end
     end
-    -- Party names are export-OPT-IN (default OFF — Fredrik 2026-07-20): the
-    -- anonymized copy keeps class/role/spec/rating so receivers still see
-    -- "RShaman 3433"-grade context via GhostMath.PartyMemberLabel. Stored data
-    -- never mutated.
     if not db.sharePartyNames and run.party then
         local copy = {}
         for k, v in pairs(run) do copy[k] = v end
         copy.party = M.AnonymizeParty(run.party)
         run = copy
     end
-    return KG.Codec.Export(KG.Codec.BuildPayload(run, KG.CharacterKey(), KG.VERSION, route,
+    return run, route
+end
+
+function G:ExportString(mapID, level, charKey, tier)
+    local tiers = select(1, RunsFor(charKey or KG.CharacterKey(), mapID, level, false))
+    local run = tiers and ((tier and tier >= 1 and tiers[tier]) or M.BestRun(tiers, 1))
+    if not run or not run.snapshots then return nil, "no timed ghost recorded for that dungeon/level" end
+    if run.legacy == "RIO" then
+        -- The one choke point every share door funnels through (Library button,
+        -- shift-clicks, /kg export, Comm answers): a guild best is not yours to
+        -- re-export under your name, and the cache re-serves it live anyway.
+        return nil, "Raider.IO ghosts can't be shared"
+    end
+    local shaped, route = ShapeForExport(run)
+    return KG.Codec.Export(KG.Codec.BuildPayload(shaped, KG.CharacterKey(), KG.VERSION, route,
         G:GetOrMintShareTag()))
+end
+
+--- Every run that belongs in the library URL (DESIGN "Library export → the
+--- portal"), in a stable order — character key, then dungeon, then level, then
+--- tier — so the same library produces the same string twice. `mapID`
+--- (optional) narrows to one dungeon. Returns entries + the referenced slice of
+--- the Route Store.
+---
+--- Raider.IO rows are skipped: the cache is not the player's data, it re-serves
+--- itself live, and every other share door already refuses it.
+--- Depleted runs ARE included, unlike the share string. The "never exported"
+--- rule (Fredrik 2026-07-19) exists so weak runs are not pushed at OTHER
+--- PLAYERS; this is the player's own data going to the player's own viewer, and
+--- a season dashboard that silently drops every depleted key would be lying
+--- about the season. Flagged for veto in docs/UNTESTED.md.
+function G:CollectLibrary(mapID)
+    local db = KG.db
+    local entries, routes = {}, nil
+    local function sortedKeys(t)
+        local keys = {}
+        for k in pairs(t or {}) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        return keys
+    end
+    for _, charKey in ipairs(sortedKeys(db.runs)) do
+        if charKey ~= KG.RIO_CHAR then
+            local byMap = db.runs[charKey]
+            for _, id in ipairs(sortedKeys(byMap)) do
+                if not mapID or id == mapID then
+                    local byLevel = byMap[id]
+                    for _, level in ipairs(sortedKeys(byLevel)) do
+                        local tiers = byLevel[level]
+                        for tier = 0, KG.MAX_TIER do
+                            local run = tiers[tier]
+                            if type(run) == "table" and run.snapshots and run.legacy ~= "RIO" then
+                                local shaped, route = ShapeForExport(run)
+                                entries[#entries + 1] = { exporter = charKey, run = shaped }
+                                if route and route.hash then
+                                    routes = routes or {}
+                                    routes[route.hash] = route
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return entries, routes
+end
+
+--- The whole library (or one dungeon) as the portal URL → url, nil, count —
+--- or nil, err. The Share Tag rides along when one exists but is NEVER minted
+--- here: lazy minting on first SHARE is the rule (DESIGN "The Share Tag"), and
+--- looking at your own data is not sharing.
+function G:ExportLibraryURL(mapID)
+    local entries, routes = G:CollectLibrary(mapID)
+    if #entries == 0 then
+        return nil, mapID and "no ghosts stored for that dungeon yet" or "no ghosts stored yet"
+    end
+    local url, err = KG.Codec.LibraryURL(
+        KG.Codec.BuildLibraryPayload(entries, KG.VERSION, routes, KG.db.shareTag))
+    if not url then return nil, err end
+    return url, nil, #entries
 end
 
 --- Build the ghost reference for a live run: this character's pinned ghost

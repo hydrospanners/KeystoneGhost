@@ -56,6 +56,9 @@ function KG.InitDB()
     if db.shareRouteData == nil then db.shareRouteData = true end -- export: embedded route (click-to-load)
     if db.sharePartyNames == nil then db.sharePartyNames = false end -- export: party names — OPT-IN
                             -- (privacy default, Fredrik 2026-07-20; off = spec labels only)
+    if db.closeOnCopy == nil then db.closeOnCopy = true end -- copy window: Ctrl+C closes it
+                            -- (Fredrik 2026-07-26). Default ON because the StaticPopup it
+                            -- replaced always closed — the checkbox is the opt-out, not a new habit.
     if db.percentDisplay == nil then db.percentDisplay = true end -- forces readout: % by default;
                             -- unticking "Show % instead of count" flips every site to raw count
                             -- (Fredrik 2026-07-20 — an on-by-default checkbox reads naturally)

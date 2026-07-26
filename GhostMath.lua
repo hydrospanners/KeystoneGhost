@@ -445,6 +445,10 @@ end
 --- kill — racing reality, no interpolation tricks. One finish line: the right edge.
 M.BOSS_UNITS = 8
 M.VIS = 0.45 -- camera viewport in course units (shared: Bar rendering + Overtake buffer)
+-- (A RUN-OFF constant lived here 2026-07-26/27: the road stopped short of the track's
+-- right edge so Mario would stop short of the numbers above it. Removed by Fredrik's
+-- call — "skip the grey, move the numbers only" — and the road reaches the edge again.
+-- Bar's end mode moves the readout instead. Don't re-add it without reading that.)
 
 function M.CoursePos(pct, bosses, nBosses)
     nBosses = nBosses or 0

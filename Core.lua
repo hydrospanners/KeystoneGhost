@@ -98,44 +98,21 @@ function KG.Start()
     end)
 end
 
---- One copy-popup recipe, two dialogs (export string, raider.io link — the
---- link door is Fredrik's 2026-07-21 order). Selected editbox, Ctrl+C prints
---- and self-closes (the MDT pattern, Fredrik 2026-07-20). The editbox is a
---- SHARED StaticPopup frame: OnHide clears the script so the import popup
---- never inherits it.
-local function CopyDialog(text, copiedMsg)
-    return {
-        text = text,
-        button1 = CLOSE,
-        hasEditBox = true,
-        editBoxWidth = 280,
-        OnShow = function(self, data)
-            local eb = self.editBox or self.EditBox
-            if eb then
-                eb:SetMaxLetters(0)
-                eb:SetText(data or "")
-                eb:HighlightText()
-                eb:SetFocus()
-                eb:SetScript("OnKeyUp", function(_, key)
-                    if key == "C" and IsControlKeyDown() then
-                        Print(copiedMsg)
-                        self:Hide()
-                    end
-                end)
-            end
-        end,
-        OnHide = function(self)
-            local eb = self.editBox or self.EditBox
-            if eb then eb:SetScript("OnKeyUp", nil) end
-        end,
-        EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
-        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-    }
+-- The copy doors all go through KG.Copy now (Copy.lua, 2026-07-26) — the
+-- StaticPopup copy dialog that used to live here was a single-line 280 px
+-- editbox, which the ~24 kB library URL made untenable. Ctrl+C still prints and
+-- closes; "Close on copy" is now a checkbox in that window.
+KG.CopyPrompts = {
+    EXPORT = { "Copy this ghost's export string:", "export copied." },
+    LINK = { "Copy the raider.io run link:", "link copied." },
+    LIBRARY = { "Paste this in your browser to open your library online:", "library link copied." },
+}
+
+--- Open the copy window for one of the CopyPrompts kinds.
+function KG.ShowCopy(kind, text)
+    local p = KG.CopyPrompts[kind] or KG.CopyPrompts.EXPORT
+    KG.Copy:Show(p[1], text, p[2])
 end
-StaticPopupDialogs["KEYSTONEGHOST_EXPORT"] = CopyDialog(
-    "Keystone Ghost — copy the export string:", "export copied.")
-StaticPopupDialogs["KEYSTONEGHOST_LINK"] = CopyDialog(
-    "Keystone Ghost — copy the raider.io run link:", "link copied.")
 
 StaticPopupDialogs["KEYSTONEGHOST_IMPORT"] = {
     text = "Keystone Ghost — paste an export string:",
@@ -247,10 +224,20 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         else
             local str, err = KG.Ghosts:ExportString(mapID, level)
             if str then
-                StaticPopup_Show("KEYSTONEGHOST_EXPORT", nil, nil, str)
+                KG.ShowCopy("EXPORT", str)
             else
                 Print("export failed — " .. (err or "unknown error"))
             end
+        end
+    elseif cmd == "online" or cmd == "library" then
+        -- The portal door (DESIGN "Library export → the portal"). The Ghost
+        -- Library's own button is the discoverable one; this is the typist's.
+        local url, err, n = KG.Ghosts:ExportLibraryURL()
+        if url then
+            KG.ShowCopy("LIBRARY", url)
+            Print(string.format("%d ghost%s in the link — paste it in your browser.", n, n == 1 and "" or "s"))
+        else
+            Print(err or "nothing to open online yet.")
         end
     elseif cmd == "import" then
         StaticPopup_Show("KEYSTONEGHOST_IMPORT")
@@ -261,12 +248,17 @@ SlashCmdList.KEYSTONEGHOST = function(input)
     elseif cmd == "route" then
         -- The raced ghost's embedded route first (live race or Finish Photo), else
         -- the most recent import's — the receiver wants it BEFORE the key starts.
+        -- The fallback is fenced to the dungeon we are standing in: in a key, "no
+        -- route here" must print, never load the last route from somewhere else.
         local st = KG.Bar.GetLiveState()
         local ref = (st and st.ref) or (KG.Recorder.summary and KG.Recorder.summary.ref)
+        local here = KG.Scenario:GetStagingMapID() or select(1, KG.Recorder:GetContext())
         local rd = ref and ref.run and ref.run.routeHash
-            and KG.Ghosts:RouteForHash(ref.run.routeHash) or KG.Ghosts:LastImportedRoute()
+            and KG.Ghosts:RouteForHash(ref.run.routeHash) or KG.Ghosts:LastImportedRoute(here)
         if rd then
             KG.RequestRouteLoad(rd)
+        elseif here then
+            Print("no route for this dungeon — race or import a ghost that carries one.")
         else
             Print("no embedded route found — race or import a ghost that carries one.")
         end
