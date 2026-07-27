@@ -759,18 +759,27 @@ end
 --- it goes straight into the C-side sprite-sheet cell pick on the 4x4 marker sheet,
 --- which accepts secrets (the EXBoss/BliZzi-proven recipe; the old readNum guard
 --- turned every secret into nil and the icon stayed portrait forever). While marked
---- this reapplies every call — two secrets can't be diffed — so a mid-run marker
---- change lands within a tick. Portraits are often BLACK until the client fires a
---- portrait update, so Core re-calls this with force on UNIT_PORTRAIT_UPDATE and
---- zone-in; the no-marker path stays cached.
+--- the sheet must be reapplied blind — two secrets can't be diffed — but on a 0.5 s
+--- CLOCK, not every 0.1 s bar update (the CPU pass, 2026-07-28): a mid-run marker
+--- CHANGE still lands within a tick, GAINING a marker repaints instantly (the cached
+--- key was "portrait"), and the C-side texture+cell work drops from 10/s to 2/s.
+--- Portraits are often BLACK until the client fires a portrait update, so Core
+--- re-calls this with force on UNIT_PORTRAIT_UPDATE and zone-in (force also skips
+--- the throttle); the no-marker path stays cached.
 function Bar.RefreshPlayerIcon(force)
     local tex = frame and frame.playerIcon
     if not tex then return end
     local marker = KG.Scenario:GetPlayerRaidMarkerOpaque() -- opaque: possibly secret
     if marker ~= nil and tex.SetSpriteSheetCell then
+        local now = GetTime()
+        if not force and tex._kgIconKey == "marker"
+            and now - (tex._kgMarkerAt or 0) < 0.5 then
+            return -- still wearing a marker, repainted < 0.5 s ago: skip this update
+        end
         tex:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
         if pcall(tex.SetSpriteSheetCell, tex, marker, 4, 4) then
             tex._kgIconKey = "marker"
+            tex._kgMarkerAt = now
             return
         end
         force = true -- the sheet just splatted over the icon: repaint the portrait
