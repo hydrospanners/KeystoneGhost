@@ -1,8 +1,10 @@
 -- Blizzard Edit Mode integration via bundled LibEditMode (namespaced build — no LibStub).
 --
 -- The bar registers as an Edit Mode system: drag to reposition, click for a settings
--- dialog (Enabled, Dock under EllesmereUI timer, Scale, Background opacity, Walking
--- bounce, Extra pace cars +3/+2, Boss lap splits). While in Edit Mode
+-- dialog (Enabled, Dock under EllesmereUI timer, Scale, Background opacity, Ghost
+-- Roster size, Boss lap splits). SIZE & POSITION ONLY since the 2026-07-28 sweep —
+-- how the race DISPLAYS (bounce, pace cars, markers, palettes) lives in the options
+-- panel; Options.lua's header carries the sharpened rule. While in Edit Mode
 -- the bar previews the synthetic test race so there is something to see and place.
 -- Dragging a docked bar is interpreted as "I want it free": the drop position is saved
 -- and attach mode turns off; re-docking is one checkbox.
@@ -82,38 +84,9 @@ function EM:Setup()
                 KG.Bar:Refresh(); KG.Splits:Refresh()
             end,
         },
-        {
-            kind = LEM.SettingType.Checkbox,
-            name = "Walking bounce",
-            desc = "Your icon does a little walk-cycle hop while moving — and stands still while you fight a boss.",
-            default = true,
-            get = function() return KG.db.bounce ~= false end,
-            set = function(_, value)
-                KG.db.bounce = value and true or false
-            end,
-        },
-        {
-            kind = LEM.SettingType.Checkbox,
-            name = "Raid marker as a hat",
-            desc = "Easter egg: your runner stays your portrait, and a raid target marker on you perches as a tiny hat above it instead of replacing your face.",
-            default = false,
-            get = function() return KG.db.markerHat == true end,
-            set = function(_, value)
-                KG.db.markerHat = value and true or false
-                KG.Bar.RefreshPlayerIcon(true) -- swap face/hat immediately, mid-run too
-            end,
-        },
-        {
-            kind = LEM.SettingType.Checkbox,
-            name = "Extra pace cars (+3/+2)",
-            desc = "Show the +3 and +2 pace cars on the road. The +1 sweeper (key-depletion pace) always runs.",
-            default = true,
-            get = function() return KG.db.chestTicks ~= false end,
-            set = function(_, value)
-                KG.db.chestTicks = value and true or false
-                KG.Bar:Refresh()
-            end,
-        },
+        -- "Walking bounce" and "Extra pace cars (+3/+2)" lived here until the
+        -- 2026-07-28 sweep — they change how the race displays, not where
+        -- anything sits, so they moved to the options panel with the hat.
         {
             -- "How many Ghost Racers to show" (Fredrik 2026-07-22). Edit Mode, not
             -- the Options panel: this is literally how many runners get drawn on
@@ -147,9 +120,11 @@ function EM:Setup()
                 KG.Splits:Refresh()
             end,
         },
-        -- Behavioral options (route-share toggles etc.) live in Options.lua —
-        -- the Blizzard AddOns panel. Edit Mode is visual/layout ONLY
-        -- (architecture rule, Fredrik 2026-07-20).
+        -- Everything else lives in Options.lua — the Blizzard AddOns panel:
+        -- the behavioral options (route-share toggles etc.) AND the
+        -- how-to-display ones (bounce, pace cars, death markers, marker hat,
+        -- palettes, % vs count). Edit Mode is SIZE & POSITION only
+        -- (architecture rule, Fredrik 2026-07-20; sharpened + swept 2026-07-28).
     })
 
     LEM:RegisterCallback("enter", function()

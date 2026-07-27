@@ -1,10 +1,15 @@
 -- Blizzard AddOns options panel (ESC → Options → AddOns → Keystone Ghost).
 --
--- Architecture rule (Fredrik 2026-07-20): the Edit Mode settings dialog owns
--- VISUAL/layout settings only (position, dock, scale, chrome, what's drawn on
--- the track); everything BEHAVIORAL — sharing, data handling, future setup —
--- lives here. No minimap button: this panel plus /kg are the entry points
--- until the Data-view UI era.
+-- Architecture rule (Fredrik 2026-07-20; sharpened 2026-07-28 when the marker
+-- hat was misfiled in Edit Mode for an hour, then applied in the same-day
+-- settings sweep): Edit Mode owns SIZE & POSITION — where frames sit, how big,
+-- their chrome and footprint (dock, scale, opacity, roster rows, the splits
+-- panel). HOW the race displays — readout language, palettes, whose deaths,
+-- which pace cars, what your icon wears and how it moves — is an Options
+-- matter and lives here, alongside everything BEHAVIORAL (sharing, data
+-- handling, future setup). The sweep moved "Walking bounce" and "Extra pace
+-- cars (+3/+2)" here accordingly. No minimap button: this panel plus /kg are
+-- the entry points until the Data-view UI era.
 --
 -- Settings API shape verified against live 12.x users in this install
 -- (ArchonTooltip/Settings.lua, BliZzi_Interrupts/UI/Config.lua):
@@ -144,6 +149,40 @@ function Options:Setup()
         Settings.CreateDropdown(category, dmSetting, GetDeathMarkerOptions,
             "Tombstones on the track. Yours stand where you died and stay. A ghost's stand on its own lane ahead of it and disappear as it reaches them — that's where its run lost time to the death penalty.")
     end
+
+    -- The marker hat (easter egg, Fredrik 2026-07-28). PANEL, not Edit Mode — it
+    -- spent an hour there first; his correction sharpened the architecture rule in
+    -- this file's header: this changes what your icon WEARS, not where anything
+    -- sits. Death markers' exact shape: how-to-display belongs here.
+    AddCheckbox(category, "KEYSTONEGHOST_MARKER_HAT",
+        "Raid marker as a hat",
+        "Your runner stays your portrait, and a raid target marker on you perches as a tiny hat above your head instead of replacing your face.",
+        false,
+        function() return KG.db.markerHat == true end,
+        function(value)
+            KG.db.markerHat = value and true or false
+            KG.Bar.RefreshPlayerIcon(true) -- swap face/hat immediately, mid-run too
+        end)
+
+    -- Swept in from Edit Mode (2026-07-28, with the hat): both change how the
+    -- race DISPLAYS, not where anything sits. The db keys and defaults are
+    -- unchanged, so existing choices carry over untouched.
+    AddCheckbox(category, "KEYSTONEGHOST_BOUNCE",
+        "Walking bounce",
+        "Your icon does a little walk-cycle hop while moving — and stands still while you fight a boss.",
+        true,
+        function() return KG.db.bounce ~= false end,
+        function(value) KG.db.bounce = value and true or false end)
+
+    AddCheckbox(category, "KEYSTONEGHOST_PACE_CARS",
+        "Extra pace cars (+3/+2)",
+        "Show the +3 and +2 pace cars on the road. The +1 sweeper (key-depletion pace) always runs.",
+        true,
+        function() return KG.db.chestTicks ~= false end,
+        function(value)
+            KG.db.chestTicks = value and true or false
+            KG.Bar:Refresh()
+        end)
 
     -- Forces readout (the count display toggle — Fredrik's own idea, 2026-07-20):
     -- checkbox ON = percent, the default (an on-by-default box asserts the norm);

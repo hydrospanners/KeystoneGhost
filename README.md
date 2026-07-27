@@ -12,9 +12,9 @@ A race bar (optionally docked under the EllesmereUI M+ timer, styled to match):
   right edge** — whoever reaches it first had the better time. While a boss is being
   fought, a runner stands at its skull landmark, then jumps forward on the kill.
 - **You race above the line, ghosts below it.** You are your raid target marker (tank
-  {square}) or your portrait — or flip "Raid marker as a hat" in Edit Mode and stay
-  your portrait with the marker perched tiny above your head. The raced ghost is the
-  round class icon riding the
+  {square}) or your portrait — or flip "Raid marker as a hat" in the options panel
+  and stay your portrait with the marker perched tiny above your head. The raced
+  ghost is the round class icon riding the
   accent cursor (the exporter's class for imports), the RaiderIO logo for replays, or
   a watch for pace ghosts — and every other roster ghost races too, as a small faded
   runner in its own lane at its own road position (hover its row to light it up).
@@ -79,14 +79,16 @@ laps (`B1 -0:12` = you killed boss 1 twelve seconds faster). Rows are clickable
 | Command | Effect |
 |---|---|
 | `/kg` | help |
-| `/kg options` | addon options (behavior; looks & layout live in Edit Mode) |
+| `/kg options` | addon options (display + behavior; size & position live in Edit Mode) |
 | `/kg export [level]` | share your best ghost as a copy/paste string |
 | `/kg import` | paste someone's ghost and race it |
 | `/kg route` | load the raced/imported ghost's embedded MDT route (also: click the ghost's badge) |
 
-Everything visual lives in the game's **Edit Mode** (the bar is a system there: drag to
-move, click for settings — enable/dock/scale/opacity/splits and more). The bar is
-clamped to the screen, so a stale saved position can never strand it off-screen.
+Size and position live in the game's **Edit Mode** (the bar is a system there: drag to
+move, click for settings — enable/dock/scale/opacity/roster size/splits). How the race
+displays — pace cars, death markers, the walking bounce, the marker hat, % vs count —
+lives in `/kg options`. The bar is clamped to the screen, so a stale saved position
+can never strand it off-screen.
 
 ## Dependencies
 

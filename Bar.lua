@@ -547,8 +547,9 @@ local function Build()
     frame.playerIcon = frame.playerHover:CreateTexture(nil, "OVERLAY")
     frame.playerIcon:SetSize(16, 16)
     frame.playerIcon:SetPoint("CENTER")
-    -- THE MARKER HAT (easter egg, Fredrik 2026-07-28; Edit Mode "Raid marker as a
-    -- hat"): with the option on, the face keeps the portrait and a carried raid
+    -- THE MARKER HAT (easter egg, Fredrik 2026-07-28; Options panel "Raid marker as
+    -- a hat" — panel, not Edit Mode: it changes what the icon WEARS, not layout):
+    -- with the option on, the face keeps the portrait and a carried raid
     -- target marker perches up here instead — 8 px, overlapping the head's top edge
     -- like a crown. Deliberately NOT animated with the walk cycle (the hop moves
     -- only the icon texture; anchors don't follow animations), so the head bounces
@@ -562,7 +563,8 @@ local function Build()
 
     -- The walk cycle ("it would be fking hilarious" — Fredrik, verbatim): a tiny hop
     -- while you're actually moving down the road. Stops when your course freezes —
-    -- so you visibly STAND at a boss while fighting it. Edit Mode toggle.
+    -- so you visibly STAND at a boss while fighting it. Options-panel toggle
+    -- (swept from Edit Mode 2026-07-28 — display, not layout).
     local walk = frame.playerIcon:CreateAnimationGroup()
     walk:SetLooping("REPEAT")
     local hop = walk:CreateAnimation("Translation")

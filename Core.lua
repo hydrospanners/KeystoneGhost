@@ -283,6 +283,6 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         -- Fredrik's call — TASKS #6).
         Print("commands:")
         print("   /kg — the Ghost Library: browse, pin, share, delete your stored ghosts")
-        print("   /kg options — addon options (behavior; looks & layout live in Edit Mode)")
+        print("   /kg options — addon options (display + behavior; size & position live in Edit Mode)")
     end
 end
