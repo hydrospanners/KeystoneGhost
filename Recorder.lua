@@ -47,12 +47,44 @@ KG.Recorder = R
 local RECONCILE_INTERVAL = 5 -- failsafe capture cadence; the events do the real work
 local MIN_SNAPSHOTS = 3
 
+-- RaiderIO acquisition budget (Fredrik 2026-07-28): the RIO tick arms in OnTick reach
+-- into RaiderIO's PRIVATE replay provider to acquire/upgrade the Raider.IO ghost.
+-- Through 0.11.0 they did so on EVERY 0.5 s tick for the first minute — up to ~120
+-- probes a key. That is both a crash risk (poking another addon's absent / half-loaded
+-- / unexpected internals over and over) AND a real CPU + GC spike: each miss re-runs
+-- the full ConvertRioReplay (~10 ms and thousands of throwaway tables on a long replay,
+-- which CleanRun then rejects for being > 5000 nodes) every half-second, right through
+-- the opening pull. Cap it — at most RIO_MAX_ACQUIRE attempts, RIO_ACQUIRE_GAP apart,
+-- so the last lands ~9 s in (a key countdown's length). If RaiderIO has not handed us a
+-- usable replay by then it was not going to; stop touching it for the rest of the run.
+-- A missing Raider.IO ghost is a fine price for never crashing.
+local RIO_MAX_ACQUIRE = 3
+local RIO_ACQUIRE_GAP = 3 -- key-time seconds between attempts (first at +3 s, last at +9 s)
+
 local rec = { active = false }
 -- The Raced-Ghost Switch core lives OUTSIDE rec: it holds references to run tables
 -- from the ghost DB, and rec is persisted wholesale as KeystoneGhostDB.liveRun —
 -- serializing those references would dump entire runs into the liveRun slot.
 local overtake = nil
 R.currentRef = nil
+
+--- May the RIO arms spend an acquisition reach-in at key-elapsed `t`? It CONSUMES an
+--- attempt (counts it, stamps the next-allowed time) whenever it returns true, so use
+--- it AS the guard — once per arm per tick. Returns false once the window is spent;
+--- setting rec.rioAcquireDone the instant an attempt SUCCEEDS closes the budget early.
+--- Keyed to key-elapsed t, not GetTime, so it survives the clock reset a client restart
+--- brings; a /reload gets a fresh window via AdoptLiveRun.
+local function RioAcquireDue(t)
+    if rec.rioAcquireDone then return false end
+    if (rec.rioTries or 0) >= RIO_MAX_ACQUIRE then
+        rec.rioAcquireDone = true -- window spent: stop reaching into RaiderIO this run
+        return false
+    end
+    if t < (rec.rioNextTryT or RIO_ACQUIRE_GAP) then return false end
+    rec.rioTries = (rec.rioTries or 0) + 1
+    rec.rioNextTryT = t + RIO_ACQUIRE_GAP
+    return true
+end
 
 function R:IsActive() return rec.active end
 
@@ -134,6 +166,8 @@ function R:OnKeyStart()
     rec.partial = nil
     rec.seededKills = 0
     rec.lastCaptureGT, rec.lastReconcile = nil, nil -- capture coalescing / heartbeat state
+    rec.rioTries, rec.rioNextTryT, rec.rioAcquireDone = 0, nil, nil -- RaiderIO reach-in budget
+    rec.lastRioCheck = nil -- arm-2 (mid-run replay switch) 5 s poll timer
 
     -- Payload-expansion context (DESIGN "Payload expansion"): captured AT RUN TIME —
     -- spec/guild/level change later; history must not rewrite. Party ratings are
@@ -248,6 +282,10 @@ function R:AdoptLiveRun(lr, elapsed)
     -- (the gap fold); lastCaptureGT could collide after a client restart reset
     -- GetTime, so it never survives adoption.
     rec.lastCaptureGT, rec.lastReconcile = nil, nil
+    -- RaiderIO reloaded with us: grant a fresh acquisition window, and drop the
+    -- GetTime-based arm-2 poll timer that a client restart would have left stale.
+    rec.rioTries, rec.rioNextTryT, rec.rioAcquireDone = nil, nil, nil
+    rec.lastRioCheck = nil
     rec.pendingEngage = nil -- a mid-fight reload: that engage may have resolved unseen
 
     -- Deaths during the gap arrive count-only; fold them into one timeline entry.
@@ -518,8 +556,12 @@ function R:OnTick()
     --      slot, full-first (BuildRioRef: convert → cache → mirror).
     local ref = R.currentRef
     if ref and ref.live then
-        KG.Ghosts:UpdateRioMirror(ref, t)
-        if t < 60 then
+        KG.Ghosts:UpdateRioMirror(ref, t) -- cheap: reads the summary, no re-conversion
+        -- Upgrade the live mirror to the full convert — but only on a BUDGETED attempt.
+        -- Before this, BuildRioGhost re-ran ConvertRioReplay every 0.5 s until it landed,
+        -- and for a replay CleanRun rejects (a long one) it never lands, so it re-converted
+        -- ~120×/key: the opening-pull CPU/GC spike. RioAcquireDue caps it to 3 tries.
+        if t < 60 and RioAcquireDue(t) then
             local run = KG.Ghosts:BuildRioGhost(rec.mapID)
             if run then
                 local newRef = KG.Ghosts:RefForRun(run)
@@ -528,6 +570,7 @@ function R:OnTick()
                     R.currentRef = newRef
                     overtake = KG.Overtake.New(run, ref.startPinned == true)
                     R.lastSwitch = { at = GetTime(), run = run }
+                    rec.rioAcquireDone = true -- got the full convert: stop probing early
                 end
             end
         end
@@ -546,13 +589,20 @@ function R:OnTick()
             end
         end
     elseif t < 60 and ref and (ref.kind == "season" or ref.kind == "par") then
-        local rio = KG.Ghosts:BuildRioRef(rec.mapID)
-        if rio then
-            R.currentRef = rio
-            -- Upgrading to the replay re-seats the Overtake core too (autos still
-            -- never switch TO it — S12 kept 2026-07-21; an automatic upgrade from
-            -- a linear ghost is never pinned).
-            overtake = KG.Overtake.New(rio.run, false)
+        -- Acquire ANY Raider.IO ref (convert → cache → mirror) on the same budget. A
+        -- mirror is a partial win: it does NOT close the budget, so the arm above keeps
+        -- trying to upgrade it to the full convert within the remaining attempts; a full
+        -- convert closes it.
+        if RioAcquireDue(t) then
+            local rio = KG.Ghosts:BuildRioRef(rec.mapID)
+            if rio then
+                R.currentRef = rio
+                -- Upgrading to the replay re-seats the Overtake core too (autos still
+                -- never switch TO it — S12 kept 2026-07-21; an automatic upgrade from
+                -- a linear ghost is never pinned).
+                overtake = KG.Overtake.New(rio.run, false)
+                if not rio.live then rec.rioAcquireDone = true end -- full convert: done
+            end
         end
     end
 
