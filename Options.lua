@@ -39,6 +39,15 @@ local function AddButton(category, name, buttonText, onClick, tooltip)
     layout:AddInitializer(CreateSettingsButtonInitializer(name, buttonText, onClick, tooltip, true))
 end
 
+-- Section header, same guarded layout door (the "Show pace cars" cluster).
+-- Missing API = the checkboxes stand headerless; nothing else is lost.
+local function AddHeader(category, name)
+    if not (CreateSettingsListSectionHeaderInitializer and SettingsPanel and SettingsPanel.GetLayout) then return end
+    local ok, layout = pcall(SettingsPanel.GetLayout, SettingsPanel, category)
+    if not ok or not layout or not layout.AddInitializer then return end
+    layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(name))
+end
+
 function Options:Setup()
     if not (Settings and Settings.RegisterVerticalLayoutCategory
         and Settings.RegisterProxySetting and Settings.CreateCheckbox
@@ -174,15 +183,22 @@ function Options:Setup()
         function() return KG.db.bounce ~= false end,
         function(value) KG.db.bounce = value and true or false end)
 
-    AddCheckbox(category, "KEYSTONEGHOST_PACE_CARS",
-        "Extra pace cars (+3/+2)",
-        "Show the +3 and +2 pace cars on the road. The +1 sweeper (key-depletion pace) always runs.",
-        true,
-        function() return KG.db.chestTicks ~= false end,
-        function(value)
-            KG.db.chestTicks = value and true or false
-            KG.Bar:Refresh()
-        end)
+    -- One box per car (Fredrik 2026-07-28, superseding the single "+3/+2"
+    -- toggle from earlier the same day): the +1 sweeper is hideable too — its
+    -- hatched wake goes with it; the gap zone's depletion warning stays.
+    AddHeader(category, "Show pace cars")
+    local function PaceCarBox(key, name, tooltip)
+        AddCheckbox(category, "KEYSTONEGHOST_" .. key:upper(), name, tooltip, true,
+            function() return KG.db[key] ~= false end,
+            function(value)
+                KG.db[key] = value and true or false
+                KG.Bar:Refresh()
+            end)
+    end
+    PaceCarBox("paceCar1", "+1 sweeper",
+        "The red sweeper drives at exactly the par time — if it passes you, the key depletes. Hiding it hides its hatched wake too; the gap zone still warns about depletion.")
+    PaceCarBox("paceCar2", "+2 pace car", "Drives at exactly the +2 time. Stay ahead of it to keep the +2.")
+    PaceCarBox("paceCar3", "+3 pace car", "Drives at exactly the +3 time. Stay ahead of it to keep the +3.")
 
     -- Forces readout (the count display toggle — Fredrik's own idea, 2026-07-20):
     -- checkbox ON = percent, the default (an on-by-default box asserts the norm);
@@ -197,14 +213,31 @@ function Options:Setup()
 
     -- Share Tag reset (DESIGN "The Share Tag" escape hatch — panel home per the
     -- settings-architecture rule; /kg sharetag stays as the undocumented dev door).
-    -- Forward-only: receivers keep old imports grouped under the old tag.
-    AddButton(category, "Share Tag", "Reset Share Tag",
-        function()
+    -- Behind a CONFIRM since 2026-07-28 (Fredrik: "are you really sure?" — the
+    -- split in receivers' grouping is permanent), and the row NAMES your current
+    -- tag: the label reads it at panel build, the popup reads it live at click.
+    StaticPopupDialogs["KEYSTONEGHOST_RESET_SHARETAG"] = {
+        text = "Keystone Ghost — really reset your Share Tag?|n|nCurrent tag: %s|n|nReceivers use this tag to group ghosts from you and your alts. After a reset, everything you share carries a NEW tag — friends' existing imports keep the old one, so your earlier and later shares stop clustering together, permanently. Sharing itself keeps working.",
+        button1 = "Reset it",
+        button2 = CANCEL,
+        OnAccept = function()
             KG.db.shareTag = nil
             print("|cff88ccffKeystoneGhost|r: share tag reset — a fresh one mints on your next export.")
             KG.Library:RefreshIfShown()
         end,
-        "Your Share Tag pseudonymously groups your alts' exports for receivers (shown in the Ghost Library footer). Resetting mints a fresh tag on your next export — forward-only, old imports stay grouped under the old tag.")
+        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+    }
+    AddButton(category,
+        "Share Tag: " .. (KG.db.shareTag or "none yet — mints on your first export"),
+        "Reset Share Tag…",
+        function()
+            if not KG.db.shareTag then
+                print("|cff88ccffKeystoneGhost|r: no share tag yet — one mints on your first export.")
+                return
+            end
+            StaticPopup_Show("KEYSTONEGHOST_RESET_SHARETAG", KG.db.shareTag)
+        end,
+        "Your Share Tag pseudonymously groups your and your alts' exports for receivers (also shown in the Ghost Library footer). Resetting asks for confirmation first — it permanently splits how receivers group your shares.")
 
     Settings.RegisterAddOnCategory(category)
 end

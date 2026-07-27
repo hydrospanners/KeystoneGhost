@@ -166,7 +166,7 @@ local function EnsureDemoDeaths(run)
 end
 
 local function SeedTestSwitch()
-    if KG.testMode then
+    if KG.testMode or KG.introMode then -- the first-login show runs the real loop rotation
         test.loopN = (test.loopN or 0) + 1
         test.scenario = (test.loopN % 2 == 1) and "real" or "rio"
     else
@@ -188,7 +188,9 @@ local function SeedTestSwitch()
         test.simRun = SimRunOf(base)
         test.ov = nil
         test.attached = nil
-        print("|cff88ccffKeystoneGhost|r: test loop — Raider.IO ghost only (the first-run look).")
+        if KG.testMode then -- the intro show runs the same loops, but quietly
+            print("|cff88ccffKeystoneGhost|r: test loop — Raider.IO ghost only (the first-run look).")
+        end
     else
         test.rioRef = nil
         test.simRun = SimRunOf(test.run)
@@ -368,7 +370,7 @@ end
 --- Shared live state for the bar and the splits panel (nil when nothing to race).
 --- Edit Mode preview reuses the synthetic test race so the frame has something to show.
 function Bar.GetLiveState()
-    if KG.testMode or KG.editModePreview then return TestState() end
+    if KG.testMode or KG.editModePreview or KG.introMode then return TestState() end
     local R = KG.Recorder
     if not R:IsActive() or not R.currentRef then return nil end
     local elapsed = R:GetElapsed()
@@ -738,7 +740,7 @@ end
 --- state so the whole flow is clickable in /kg test; live clicks go to the Recorder.
 function Bar.HandleRowClick(run)
     if not run then return end
-    if KG.testMode or KG.editModePreview then
+    if KG.testMode or KG.editModePreview or KG.introMode then
         if not test.ov then return end
         local raced = test.attached or test.run
         if run == raced then
@@ -929,7 +931,7 @@ function Bar:Update()
     -- Snaps on big discontinuities (new run / ref change) and on backwards resets.
     -- Walk-speed cap is in ROAD seconds: test mode compresses time, so scale it up
     -- there or every motion saturates the cap into stutter (2026-07-19 field report).
-    local capMul = (KG.testMode or KG.editModePreview) and TEST_SPEED or 1
+    local capMul = (KG.testMode or KG.editModePreview or KG.introMode) and TEST_SPEED or 1
     local function ease(cur, target)
         if cur == nil or math.abs(cur - target) > 0.25 or target < cur - 0.02 then
             return target
@@ -965,15 +967,18 @@ function Bar:Update()
     -- Pace cars: linear racers that complete the road in exactly par×frac. The +1 car
     -- is the sweeper — if it passes you, the key depletes. +2/+3 cars are optional.
     if st.par and st.par > 0 and st.elapsed then
-        local cars = { { 0.6, "+3" }, { 0.8, "+2" }, { 1.0, "+1" } }
+        -- One visibility key per car (Fredrik 2026-07-28, superseding the single
+        -- "+3/+2" toggle): the +1 sweeper is hideable too — its swept-road wake
+        -- goes with it below; the gap zone's depletion warning is untouched.
+        local cars = { { 0.6, "+3", "paceCar3" }, { 0.8, "+2", "paceCar2" }, { 1.0, "+1", "paceCar1" } }
         -- Tags are drawn SWEEPER FIRST (i = 3 → 1, which is also left → right): early
         -- in a run all three cars are bunched at the start line, and when they overlap
         -- the one whose identity matters is the +1.
         local tagged = {}
         for i = 3, 1, -1 do
-            local frac, tag = cars[i][1], cars[i][2]
+            local frac, tag, carKey = cars[i][1], cars[i][2], cars[i][3]
             local f = frame.paceCars[i]
-            if tag == "+1" or KG.db.chestTicks ~= false then
+            if KG.db[carKey] ~= false then
                 local carCourse = st.elapsed / (st.par * frac)
                 local dim = pinned(carCourse) ~= 0 and 0.5 or 1 -- lurking at an edge
                 local cx = px(carCourse)
@@ -1031,6 +1036,7 @@ function Bar:Update()
                 f:Show()
             else
                 f:Hide()
+                if tag == "+1" then frame.sweptZone:Hide() end -- the wake is the sweeper's
             end
         end
     else
@@ -1192,7 +1198,7 @@ function Bar:Update()
     -- Baselines are per display-source: a test-mode flip, a new reference (new run),
     -- or the frame having been hidden across a run must never read as fresh deaths
     -- (phantom mega-knock). On a source change the baselines just re-seed.
-    local kbSrc = (KG.testMode or KG.editModePreview) and "test" or tostring(ref)
+    local kbSrc = (KG.testMode or KG.editModePreview or KG.introMode) and "test" or tostring(ref)
     if frame._kbSrc ~= kbSrc then
         frame._kbSrc = kbSrc
         frame._kb, frame._kbPot = nil, nil
@@ -1741,6 +1747,56 @@ function Bar:ShowSummary(s)
     frame:Show()
 end
 
+-- ── First-login placement: the MOVE ME show (Fredrik 2026-07-28) ─────────────
+-- A fresh install's bar was invisible until its first key, and Edit Mode didn't
+-- pick the frame up until the bar had drawn once (his field report) — a catch-22
+-- for brand-new users. So the very first login EVER stages the bar running the
+-- demo loops (the /kg test rotation, chat-quiet) with a drag handle above it:
+-- drag it where you want, close it, done. The handle never returns; from then on
+-- placement belongs to Edit Mode. Ends early when the real thing takes the
+-- stage: a key starting, Edit Mode opening, or /kg test.
+local function EnsureMoveMe()
+    if frame.moveMe then return frame.moveMe end
+    local m = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    m:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 4)
+    m:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0, 4)
+    m:SetHeight(24)
+    Style.SkinPanel(m)
+    m:EnableMouse(true)
+    m:RegisterForDrag("LeftButton")
+    m.text = m:CreateFontString(nil, "OVERLAY")
+    Style.SetFont(m.text, 11)
+    m.text:SetPoint("CENTER", -8, 0)
+    m.text:SetTextColor(Style.GetAccent())
+    m.text:SetText("Keystone Ghost — drag me into place, then close me")
+    -- Dragging moves the BAR (the strip rides it); same save + undock rules as
+    -- an Edit Mode drag, minus the chat note — this IS the placement tutorial.
+    m:SetScript("OnDragStart", function() frame:StartMoving() end)
+    m:SetScript("OnDragStop", function()
+        frame:StopMovingOrSizing()
+        local point, _, relPoint, x, y = frame:GetPoint()
+        KG.db.pos = { point = point, relPoint = relPoint, x = x, y = y }
+        KG.db.attach = nil -- dragged free: the Edit Mode drag rule
+        Bar:InvalidatePosition()
+        Bar:Refresh()
+    end)
+    local close = Style.CloseButton(m, function() Bar.EndIntro() end)
+    close:SetPoint("RIGHT", -4, 0)
+    frame.moveMe = m
+    return m
+end
+
+--- End the first-login show (close ×, a real key, Edit Mode, /kg test). Safe to
+--- call any time — no-ops unless the intro is running.
+function Bar.EndIntro()
+    if not KG.introMode then return end
+    KG.introMode = nil
+    Bar.ResetTestLoop() -- drop the demo cast; a later /kg test reseeds fresh
+    if frame and frame.moveMe then frame.moveMe:Hide() end
+    Bar:Refresh()
+    KG.Splits:Refresh()
+end
+
 function Bar:Refresh()
     if not frame then Build() end
     UpdateAttachment()
@@ -1752,7 +1808,15 @@ function Bar:Refresh()
     -- Recording never ran in raids (every recorder path is C_ChallengeMode-
     -- gated); this stands the DISPLAY down. Splits follows via bar:IsShown().
     if KG.Scenario:InRaidInstance() and not KG.editModePreview then frame:Hide(); return end
-    if KG.testMode or KG.editModePreview or (KG.Recorder:IsActive() and KG.Recorder.currentRef) then
+    -- The MOVE ME handle rides above the bar during the first-login show only
+    -- (a child frame: it hides with the bar wherever the bar hides).
+    if KG.introMode then
+        EnsureMoveMe():Show()
+    elseif frame.moveMe and frame.moveMe:IsShown() then
+        frame.moveMe:Hide()
+    end
+    if KG.testMode or KG.editModePreview or KG.introMode
+        or (KG.Recorder:IsActive() and KG.Recorder.currentRef) then
         frame.closeBtn:Hide() -- the number block places itself (PlaceNumbers)
         Bar:Update()
     elseif KG.Recorder.summary then

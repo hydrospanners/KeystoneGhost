@@ -20,6 +20,19 @@ loader:SetScript("OnEvent", function(self, event, addonName)
         KG.Options:Setup()
         KG.Library:Setup() -- the minimap button (the window itself builds lazily)
         KG.Comm:Setup() -- chat-share pipe: prefix, chat filters, link clicks
+        -- First-login placement (Fredrik 2026-07-28): a fresh install's bar was
+        -- invisible until its first key — and his field report says Edit Mode
+        -- didn't pick the frame up until the bar had drawn once. So the very
+        -- first login stages the demo loops with a MOVE ME handle above the bar
+        -- (Bar.lua: EnsureMoveMe / Bar.EndIntro). Once, EVER — db.introShown
+        -- stamps immediately; installs that predate the field are grandfathered
+        -- in InitDB via schemaVersion.
+        if not KG.db.introShown then
+            KG.db.introShown = true
+            KG.introMode = true
+            KG.Bar:Refresh()
+            KG.Splits:Refresh()
+        end
     end
 end)
 
@@ -198,6 +211,7 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         KG.Bar:Refresh()
         KG.Splits:Refresh()
     elseif cmd == "test" then
+        KG.Bar.EndIntro() -- the deliberate demo outranks the first-login show
         KG.testMode = not KG.testMode
         if KG.testMode then KG.Bar.ResetTestLoop() end -- loop 1, fresh DB scan
         Print("test mode " .. (KG.testMode

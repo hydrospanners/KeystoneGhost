@@ -144,6 +144,7 @@ function R:OnKeyStart()
         KG.testMode = false
         print("|cff88ccffKeystoneGhost|r: test mode off — a real key is starting.")
     end
+    KG.Bar.EndIntro() -- a real key outranks the first-login MOVE ME show (no-op otherwise)
     R:AbandonPartySpecSweep() -- a new key outranks last run's spec backfill
     R.summary = nil -- a new race replaces the last verdict
     rec.active = true

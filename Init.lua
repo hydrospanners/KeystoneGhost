@@ -36,6 +36,17 @@ function KG.InitDB()
     if db.markerHat == nil then db.markerHat = false end -- easter egg (2026-07-28): the face
                             -- stays your portrait; a raid marker perches tiny above it
                             -- instead of replacing it (Options panel "Raid marker as a hat")
+    -- Pace car visibility, one key per car (Fredrik 2026-07-28: "+1 +2 +3" boxes;
+    -- the sweeper is hideable too). chestTicks was the old single "+3/+2" switch —
+    -- an explicit OFF carries over to the two cars it used to govern, then retires.
+    if db.chestTicks == false then
+        if db.paceCar2 == nil then db.paceCar2 = false end
+        if db.paceCar3 == nil then db.paceCar3 = false end
+    end
+    db.chestTicks = nil -- retired 2026-07-28: split into paceCar1/2/3
+    if db.paceCar1 == nil then db.paceCar1 = true end
+    if db.paceCar2 == nil then db.paceCar2 = true end
+    if db.paceCar3 == nil then db.paceCar3 = true end
     db.runs = db.runs or {}   -- [charKey][mapID][level] = { [tier] = run } (one slot per chest tier)
     db.picks = db.picks or {} -- [pinnerCharKey][mapID] = { char, level, tier } — each
                               -- character's ONE pick per dungeon (Library pin; races any
@@ -67,6 +78,13 @@ function KG.InitDB()
                             -- (Fredrik 2026-07-20 — an on-by-default checkbox reads naturally)
     db.minimap = db.minimap or {} -- LibDBIcon state (hide/minimapPos/lock) — Ghost Library button
                             -- db.libPos (Library window position) stays nil until first drag
+    -- First-login placement (Fredrik 2026-07-28): the MOVE ME show runs once,
+    -- ever (stamped at PLAYER_LOGIN in Core). Installs that predate the field
+    -- placed their bar long ago — schemaVersion (stamped by MigrateDB on every
+    -- install's first login) marks them not-fresh, so only a truly virgin
+    -- SavedVariables file gets the show. InitDB runs at ADDON_LOADED, BEFORE
+    -- Start()'s MigrateDB, which is what makes this order-proof.
+    if db.introShown == nil and db.schemaVersion ~= nil then db.introShown = true end
     db.colorVision = db.colorVision or "default" -- verdict palette (Options dropdown, 2026-07-21)
     db.deathMarkers = db.deathMarkers or "all" -- tombstones: "none" | "yours" | "all"
                             -- (Options dropdown, 2026-07-22). DISPLAY-ONLY: a ghost's pace

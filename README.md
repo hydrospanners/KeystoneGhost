@@ -26,7 +26,8 @@ A race bar (optionally docked under the EllesmereUI M+ timer, styled to match):
   automatic switches stop until you click the raced row again to unpin). Imported
   ghosts start pinned, so racing the sender stays deliberate.
 - **Pace cars** run the road at exactly the chest times: the red **+1 sweeper** must
-  never pass you — if it does, the key depletes. Grey +2/+3 cars are toggleable.
+  never pass you — if it does, the key depletes. Every car has its own checkbox in
+  the options panel; hiding the +1 hides its hatched wake too.
 - The **gap zone** between you and the raced ghost glows green when you lead; behind,
   it fades grey → red as holding the ghost's pace approaches depleting the key. The
   time delta and count `%` sit stacked at the top right.
@@ -85,10 +86,12 @@ laps (`B1 -0:12` = you killed boss 1 twelve seconds faster). Rows are clickable
 | `/kg route` | load the raced/imported ghost's embedded MDT route (also: click the ghost's badge) |
 
 Size and position live in the game's **Edit Mode** (the bar is a system there: drag to
-move, click for settings — enable/dock/scale/opacity/roster size/splits). How the race
-displays — pace cars, death markers, the walking bounce, the marker hat, % vs count —
-lives in `/kg options`. The bar is clamped to the screen, so a stale saved position
-can never strand it off-screen.
+move, click for settings — enable/dock/scale/opacity/roster size/roster display). How
+the race displays — pace cars, death markers, the walking bounce, the marker hat, % vs
+count — lives in `/kg options`. The bar is clamped to the screen, so a stale saved
+position can never strand it off-screen. On the very first login after installing, the
+bar stages itself with demo data and a "drag me into place" handle, so it can be placed
+before your first key.
 
 ## Dependencies
 

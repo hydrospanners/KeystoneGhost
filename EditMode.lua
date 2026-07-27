@@ -2,7 +2,7 @@
 --
 -- The bar registers as an Edit Mode system: drag to reposition, click for a settings
 -- dialog (Enabled, Dock under EllesmereUI timer, Scale, Background opacity, Ghost
--- Roster size, Boss lap splits). SIZE & POSITION ONLY since the 2026-07-28 sweep —
+-- Roster size, Display Ghost Roster). SIZE & POSITION ONLY since the 2026-07-28 sweep —
 -- how the race DISPLAYS (bounce, pace cars, markers, palettes) lives in the options
 -- panel; Options.lua's header carries the sharpened rule. While in Edit Mode
 -- the bar previews the synthetic test race so there is something to see and place.
@@ -110,9 +110,13 @@ function EM:Setup()
             end,
         },
         {
+            -- Renamed from "Boss lap splits" (Fredrik 2026-07-28): the toggle
+            -- always governed the WHOLE roster panel, not just the lap columns —
+            -- the name now says what it shows. db key stays `splits` (saved
+            -- choices carry over).
             kind = LEM.SettingType.Checkbox,
-            name = "Boss lap splits",
-            desc = "Show per-boss lap deltas against every stored ghost below the bar.",
+            name = "Display Ghost Roster",
+            desc = "Show the Ghost Roster panel under the bar — every ghost racing you, with its live gap and per-boss laps.",
             default = true,
             get = function() return KG.db.splits ~= false end,
             set = function(_, value)
@@ -128,6 +132,7 @@ function EM:Setup()
     })
 
     LEM:RegisterCallback("enter", function()
+        KG.Bar.EndIntro() -- Edit Mode takes the stage from the first-login show
         KG.editModePreview = true
         KG.Bar:Refresh()
         KG.Splits:Refresh()

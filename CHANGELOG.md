@@ -7,10 +7,25 @@ All notable changes to Keystone Ghost are listed here.
 - New option, "Raid marker as a hat", in the options panel: your runner stays
   your portrait, and a raid target marker on you perches as a tiny hat above
   your head instead of replacing your face.
-- Settings sweep: "Walking bounce" and "Extra pace cars (+3/+2)" moved from
-  Edit Mode to the options panel. The rule they follow now: Edit Mode carries
-  size and position — where things sit and how big; how the race displays
-  lives in the options panel. Your saved choices carry over unchanged.
+- Settings sweep: "Walking bounce" and the pace car toggles moved from Edit
+  Mode to the options panel. The rule they follow now: Edit Mode carries size
+  and position — where things sit and how big; how the race displays lives in
+  the options panel. Your saved choices carry over unchanged.
+- First login after installing, the bar introduces itself: it appears running
+  the demo loops with a "drag me into place" handle above it. Drag it where
+  you want it, close the handle, done — the handle never shows again, and
+  Edit Mode owns placement from then on. Fixes the fresh-install catch-22
+  where Edit Mode didn't pick the bar up until it had been shown once — and
+  nothing showed it before your first key.
+- Every pace car has its own checkbox now — "Show pace cars": +1, +2, +3 in
+  the options panel. The +1 sweeper can be hidden too; its red wake goes with
+  it, and the gap zone still warns about depletion. An old "Extra pace cars"
+  off-setting carries over to the +2/+3 boxes.
+- The Edit Mode toggle "Boss lap splits" is now "Display Ghost Roster" — it
+  always governed the whole roster panel, not just the lap columns.
+- "Reset Share Tag" now shows your current tag and asks for confirmation
+  first — a reset permanently splits how receivers group your earlier and
+  later shares.
 - All the heavy Raider.IO work now happens while you walk in and during the
   key countdown — never while the timer runs. The addon asks RaiderIO for its
   replay a few times before the gates drop; if it hasn't answered by then, it
