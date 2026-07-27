@@ -328,6 +328,27 @@ function G:BuildRioGhost(mapID)
     if not mapID then return nil end
     local replay = GetProviderReplay()
     if not replay then return nil end
+    -- Cached short-circuit (Fredrik 2026-07-28, docs/LIFECYCLE.md — the RaiderIO rule):
+    -- if we have ALREADY converted this exact replay, hand back the stored ghost without
+    -- re-running ConvertRioReplay. The identity peek reads only header fields
+    -- (keystone_run_id, or level + clear_time_ms + date for id-less replays) — no
+    -- event-log walk — so every repeat caller (Walk-In cache-on-sight retries, the
+    -- Warm-Up budget, a mid-run Library refresh) is cheap once the replay is banked, and
+    -- the Key Run never re-converts. A genuinely new replay falls through and converts.
+    local stored = G:GetStoredRioRun(mapID)
+    if stored then
+        local id = tonumber(replay.keystone_run_id)
+        if id then
+            if stored.rioRunId == id then return stored end
+        elseif not stored.rioRunId then
+            local durMs = tonumber(replay.clear_time_ms)
+            if durMs and stored.level == tonumber(replay.mythic_level)
+                and stored.durationSec == durMs / 1000
+                and stored.completedAt == M.IsoToEpoch(replay.date) then
+                return stored
+            end
+        end
+    end
     local raw = M.ConvertRioReplay(replay, { mapID = mapID, parTimeSec = S:GetParTimeSec(mapID) })
     if not raw then return nil end
     if raw.parTimeSec then
