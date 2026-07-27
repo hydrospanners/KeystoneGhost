@@ -2,6 +2,34 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.12.0] - 2026-07-28
+
+- New option, "Raid marker as a hat", in the options panel: your runner stays
+  your portrait, and a raid target marker on you perches as a tiny hat above
+  your head instead of replacing your face.
+- Settings sweep: "Walking bounce" and "Extra pace cars (+3/+2)" moved from
+  Edit Mode to the options panel. The rule they follow now: Edit Mode carries
+  size and position — where things sit and how big; how the race displays
+  lives in the options panel. Your saved choices carry over unchanged.
+- All the heavy Raider.IO work now happens while you walk in and during the
+  key countdown — never while the timer runs. The addon asks RaiderIO for its
+  replay a few times before the gates drop; if it hasn't answered by then, it
+  stops asking for the rest of that run and races your season best instead
+  (the replay banks again on your next key). Before, a replay the addon
+  couldn't accept made it retry every half-second through the whole opening
+  minute — a stutter in the first pulls, and another addon's internals poked
+  ~120 times a key.
+- Two niceties left with that, on purpose: flipping RaiderIO's replay dropdown
+  mid-run no longer swaps the ghost mid-run, and the fallback live mirror no
+  longer upgrades to the full replay mid-run. Both return on your next key.
+- The race math takes a shortcut: timeline sampling narrows straight in on the
+  right recorded step instead of walking every step from the start. Same
+  answers — verified against the old math on 160,000 checks — at a fraction of
+  the work, biggest on long Raider.IO replays.
+- Wearing a raid target marker repaints your icon twice a second instead of
+  ten times. A marker's value is one of Midnight's secrets, so it can't be
+  compared — only repainted; now it repaints on a clock.
+
 ## [0.11.0] - 2026-07-26
 
 - A dungeon with no MDT route raced against the wrong one. MDT gives every
