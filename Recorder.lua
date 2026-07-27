@@ -273,6 +273,10 @@ end
 function R:AdoptLiveRun(lr, elapsed)
     R:AbandonPartySpecSweep()
     R.summary = nil
+    -- The OTHER door into an active recording (OnKeyStart is the first): a
+    -- reconnect mid-key on an unplaced install must not leave the MOVE ME
+    -- show's demo data masking the real adopted race (Fredrik 2026-07-28).
+    KG.Bar.EndIntro()
     rec = lr
     rec.active = true
     local now = GetTime()

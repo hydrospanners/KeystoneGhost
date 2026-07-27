@@ -1754,9 +1754,12 @@ end
 -- /kg test rotation, chat-quiet) with a drag handle above it, UNTIL the bar has
 -- been PLACED: dragging the handle, dragging in Edit Mode, or closing the handle
 -- ("I'm happy where it is" — dock users never need a drag) all stamp db.placed,
--- and one placement covers every character. A key starting, Edit Mode opening,
--- or /kg test only ends the show for the session — unplaced means the offer
--- returns next login, on any character.
+-- and one placement covers every character. A key starting (fresh, or ADOPTED
+-- on a reconnect mid-run — both recorder doors kill the show), Edit Mode
+-- opening, or /kg test only ends the show for the session — unplaced means the
+-- offer returns next login, on any character. Combat hides the whole show
+-- (Refresh's stand-down below) and it returns when the fight ends: an
+-- unrequested tutorial never sits over live play.
 local function EnsureMoveMe()
     if frame.moveMe then return frame.moveMe end
     local m = CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -1814,9 +1817,16 @@ function Bar:Refresh()
     -- Recording never ran in raids (every recorder path is C_ChallengeMode-
     -- gated); this stands the DISPLAY down. Splits follows via bar:IsShown().
     if KG.Scenario:InRaidInstance() and not KG.editModePreview then frame:Hide(); return end
-    -- The MOVE ME handle rides above the bar during the first-login show only
+    -- The MOVE ME handle rides above the bar during the placement show only
     -- (a child frame: it hides with the bar wherever the bar hides).
     if KG.introMode then
+        -- Combat stand-down (Fredrik 2026-07-28: placement "must not disrupt
+        -- play if it appears mid combat"): a reconnect can land an unplaced
+        -- install straight into a fight, and the show persists until placed —
+        -- a demo race and a mouse-blocking strip have no business over live
+        -- combat. The 0.5 s ticker keeps calling Refresh, so the show returns
+        -- within a tick of combat dropping; placement state is untouched.
+        if InCombatLockdown() then frame:Hide(); return end
         EnsureMoveMe():Show()
     elseif frame.moveMe and frame.moveMe:IsShown() then
         frame.moveMe:Hide()

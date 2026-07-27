@@ -16,9 +16,11 @@ All notable changes to Keystone Ghost are listed here.
   returning at login — on any character — until the bar has been placed.
   Dragging the handle, dragging the bar in Edit Mode, or closing the handle
   ("keep it right here") all count as placing; one placement covers all your
-  characters, since the position is shared account-wide. Fixes the
-  fresh-install catch-22 where Edit Mode didn't pick the bar up until it had
-  been shown once — and nothing showed it before your first key.
+  characters, since the position is shared account-wide. The show stands down
+  during combat and returns when the fight ends — and a reconnect into a
+  running key resumes the real race, never the demo. Fixes the fresh-install
+  catch-22 where Edit Mode didn't pick the bar up until it had been shown
+  once — and nothing showed it before your first key.
 - Every pace car has its own checkbox now — "Show pace cars": +1, +2, +3 in
   the options panel. The +1 sweeper can be hidden too; its red wake goes with
   it, and the gap zone still warns about depletion. An old "Extra pace cars"
