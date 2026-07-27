@@ -22,13 +22,15 @@ loader:SetScript("OnEvent", function(self, event, addonName)
         KG.Comm:Setup() -- chat-share pipe: prefix, chat filters, link clicks
         -- First-login placement (Fredrik 2026-07-28): a fresh install's bar was
         -- invisible until its first key — and his field report says Edit Mode
-        -- didn't pick the frame up until the bar had drawn once. So the very
-        -- first login stages the demo loops with a MOVE ME handle above the bar
-        -- (Bar.lua: EnsureMoveMe / Bar.EndIntro). Once, EVER — db.introShown
-        -- stamps immediately; installs that predate the field are grandfathered
-        -- in InitDB via schemaVersion.
-        if not KG.db.introShown then
-            KG.db.introShown = true
+        -- didn't pick the frame up until the bar had drawn once. So logins stage
+        -- the demo loops with a MOVE ME handle above the bar (Bar.lua:
+        -- EnsureMoveMe / Bar.EndIntro) until the bar HAS BEEN PLACED — a drag
+        -- (handle or Edit Mode) or the handle's close stamps db.placed, and one
+        -- placement covers every character (position and DB are account-wide).
+        -- A key/Edit Mode//kg test only dismisses for the session — unplaced is
+        -- unplaced, the offer returns next login. Pre-0.12 installs are
+        -- grandfathered as placed in InitDB via schemaVersion.
+        if not KG.db.placed then
             KG.introMode = true
             KG.Bar:Refresh()
             KG.Splits:Refresh()

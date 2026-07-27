@@ -78,13 +78,17 @@ function KG.InitDB()
                             -- (Fredrik 2026-07-20 — an on-by-default checkbox reads naturally)
     db.minimap = db.minimap or {} -- LibDBIcon state (hide/minimapPos/lock) — Ghost Library button
                             -- db.libPos (Library window position) stays nil until first drag
-    -- First-login placement (Fredrik 2026-07-28): the MOVE ME show runs once,
-    -- ever (stamped at PLAYER_LOGIN in Core). Installs that predate the field
+    -- First-login placement (Fredrik 2026-07-28): the MOVE ME show returns at
+    -- login on EVERY character until the bar has actually been PLACED — a drag
+    -- (the MOVE ME handle or Edit Mode) or the handle's deliberate close,
+    -- whichever comes first (his tie-to-placement call, superseding the same-
+    -- day shown-once draft). The DB is account-wide and so is the bar position:
+    -- one placement settles every character. Installs that predate the field
     -- placed their bar long ago — schemaVersion (stamped by MigrateDB on every
-    -- install's first login) marks them not-fresh, so only a truly virgin
-    -- SavedVariables file gets the show. InitDB runs at ADDON_LOADED, BEFORE
-    -- Start()'s MigrateDB, which is what makes this order-proof.
-    if db.introShown == nil and db.schemaVersion ~= nil then db.introShown = true end
+    -- install's first login) marks them placed. InitDB runs at ADDON_LOADED,
+    -- BEFORE Start()'s MigrateDB, which is what makes this order-proof.
+    if db.placed == nil and db.schemaVersion ~= nil then db.placed = true end
+    db.introShown = nil -- retired same-day draft key (shown-once; never shipped)
     db.colorVision = db.colorVision or "default" -- verdict palette (Options dropdown, 2026-07-21)
     db.deathMarkers = db.deathMarkers or "all" -- tombstones: "none" | "yours" | "all"
                             -- (Options dropdown, 2026-07-22). DISPLAY-ONLY: a ghost's pace

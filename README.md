@@ -89,9 +89,9 @@ Size and position live in the game's **Edit Mode** (the bar is a system there: d
 move, click for settings — enable/dock/scale/opacity/roster size/roster display). How
 the race displays — pace cars, death markers, the walking bounce, the marker hat, % vs
 count — lives in `/kg options`. The bar is clamped to the screen, so a stale saved
-position can never strand it off-screen. On the very first login after installing, the
-bar stages itself with demo data and a "drag me into place" handle, so it can be placed
-before your first key.
+position can never strand it off-screen. Until the bar has been placed — a drag (the
+handle or Edit Mode) or closing the handle — logins stage it with demo data and a "drag
+me into place" handle above it, so it gets placed before your first key.
 
 ## Dependencies
 

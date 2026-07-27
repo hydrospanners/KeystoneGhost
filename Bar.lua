@@ -1747,14 +1747,16 @@ function Bar:ShowSummary(s)
     frame:Show()
 end
 
--- ── First-login placement: the MOVE ME show (Fredrik 2026-07-28) ─────────────
+-- ── Login placement: the MOVE ME show (Fredrik 2026-07-28) ───────────────────
 -- A fresh install's bar was invisible until its first key, and Edit Mode didn't
 -- pick the frame up until the bar had drawn once (his field report) — a catch-22
--- for brand-new users. So the very first login EVER stages the bar running the
--- demo loops (the /kg test rotation, chat-quiet) with a drag handle above it:
--- drag it where you want, close it, done. The handle never returns; from then on
--- placement belongs to Edit Mode. Ends early when the real thing takes the
--- stage: a key starting, Edit Mode opening, or /kg test.
+-- for brand-new users. So logins stage the bar running the demo loops (the
+-- /kg test rotation, chat-quiet) with a drag handle above it, UNTIL the bar has
+-- been PLACED: dragging the handle, dragging in Edit Mode, or closing the handle
+-- ("I'm happy where it is" — dock users never need a drag) all stamp db.placed,
+-- and one placement covers every character. A key starting, Edit Mode opening,
+-- or /kg test only ends the show for the session — unplaced means the offer
+-- returns next login, on any character.
 local function EnsureMoveMe()
     if frame.moveMe then return frame.moveMe end
     local m = CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -1777,10 +1779,14 @@ local function EnsureMoveMe()
         local point, _, relPoint, x, y = frame:GetPoint()
         KG.db.pos = { point = point, relPoint = relPoint, x = x, y = y }
         KG.db.attach = nil -- dragged free: the Edit Mode drag rule
+        KG.db.placed = true -- PLACED: the show stands down for good (all characters)
         Bar:InvalidatePosition()
         Bar:Refresh()
     end)
-    local close = Style.CloseButton(m, function() Bar.EndIntro() end)
+    local close = Style.CloseButton(m, function()
+        KG.db.placed = true -- deliberate close = "keep it right here": that IS placement
+        Bar.EndIntro()
+    end)
     close:SetPoint("RIGHT", -4, 0)
     frame.moveMe = m
     return m

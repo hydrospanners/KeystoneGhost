@@ -23,6 +23,7 @@ function EM:Setup()
     LEM:AddFrame(bar, function(frame)
         local point, _, relPoint, x, y = frame:GetPoint()
         KG.db.pos = { point = point, relPoint = relPoint, x = x, y = y }
+        KG.db.placed = true -- an Edit Mode drag IS placement: the MOVE ME show stands down
         if KG.db.attach then
             KG.db.attach = nil -- a manual drag means the user wants it free-floating
             print("|cff88ccffKeystoneGhost|r: undocked from the EllesmereUI timer (dragged; re-dock in Edit Mode settings).")
