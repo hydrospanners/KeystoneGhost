@@ -94,6 +94,17 @@ function EM:Setup()
         },
         {
             kind = LEM.SettingType.Checkbox,
+            name = "Raid marker as a hat",
+            desc = "Easter egg: your runner stays your portrait, and a raid target marker on you perches as a tiny hat above it instead of replacing your face.",
+            default = false,
+            get = function() return KG.db.markerHat == true end,
+            set = function(_, value)
+                KG.db.markerHat = value and true or false
+                KG.Bar.RefreshPlayerIcon(true) -- swap face/hat immediately, mid-run too
+            end,
+        },
+        {
+            kind = LEM.SettingType.Checkbox,
             name = "Extra pace cars (+3/+2)",
             desc = "Show the +3 and +2 pace cars on the road. The +1 sweeper (key-depletion pace) always runs.",
             default = true,

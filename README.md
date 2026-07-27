@@ -12,7 +12,9 @@ A race bar (optionally docked under the EllesmereUI M+ timer, styled to match):
   right edge** — whoever reaches it first had the better time. While a boss is being
   fought, a runner stands at its skull landmark, then jumps forward on the kill.
 - **You race above the line, ghosts below it.** You are your raid target marker (tank
-  {square}) or your portrait. The raced ghost is the round class icon riding the
+  {square}) or your portrait — or flip "Raid marker as a hat" in Edit Mode and stay
+  your portrait with the marker perched tiny above your head. The raced ghost is the
+  round class icon riding the
   accent cursor (the exporter's class for imports), the RaiderIO logo for replays, or
   a watch for pace ghosts — and every other roster ghost races too, as a small faded
   runner in its own lane at its own road position (hover its row to light it up).

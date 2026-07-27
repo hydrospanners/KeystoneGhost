@@ -547,6 +547,17 @@ local function Build()
     frame.playerIcon = frame.playerHover:CreateTexture(nil, "OVERLAY")
     frame.playerIcon:SetSize(16, 16)
     frame.playerIcon:SetPoint("CENTER")
+    -- THE MARKER HAT (easter egg, Fredrik 2026-07-28; Edit Mode "Raid marker as a
+    -- hat"): with the option on, the face keeps the portrait and a carried raid
+    -- target marker perches up here instead — 8 px, overlapping the head's top edge
+    -- like a crown. Deliberately NOT animated with the walk cycle (the hop moves
+    -- only the icon texture; anchors don't follow animations), so the head bounces
+    -- under a floating hat — upgrade the hat to hopping only if that reads wrong in
+    -- the field. Painted/hidden by RefreshPlayerIcon, which owns every marker rule.
+    frame.markerHat = frame.playerHover:CreateTexture(nil, "OVERLAY", nil, 1)
+    frame.markerHat:SetSize(8, 8)
+    frame.markerHat:SetPoint("BOTTOM", frame.playerIcon, "TOP", 0, -2)
+    frame.markerHat:Hide()
     Bar.RefreshPlayerIcon(true)
 
     -- The walk cycle ("it would be fking hilarious" — Fredrik, verbatim): a tiny hop
@@ -770,6 +781,32 @@ function Bar.RefreshPlayerIcon(force)
     local tex = frame and frame.playerIcon
     if not tex then return end
     local marker = KG.Scenario:GetPlayerRaidMarkerOpaque() -- opaque: possibly secret
+    -- MARKER HAT mode (easter egg, 2026-07-28): the marker is CONSUMED here — painted
+    -- onto the 8 px hat with the same blind cell-pick on the same 0.5 s clock (only
+    -- the VALUE is secret; presence nil-tests fine) — so the face path below never
+    -- sees it and stays the cached portrait. Performance-neutral vs the full-face
+    -- marker: the identical repaint budget lands on a smaller texture, and the face
+    -- never flips paint paths at all.
+    local hat = frame.markerHat
+    if KG.db.markerHat and hat then
+        if marker ~= nil and hat.SetSpriteSheetCell then
+            local now = GetTime()
+            if force or not hat:IsShown() or now - (hat._kgAt or 0) >= 0.5 then
+                hat:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
+                if pcall(hat.SetSpriteSheetCell, hat, marker, 4, 4) then
+                    hat._kgAt = now
+                    hat:Show()
+                else
+                    hat:Hide() -- cell-pick refused (API drift): never wear a garbage tile
+                end
+            end
+        else
+            hat:Hide() -- unmarked: bare head
+        end
+        marker = nil
+    elseif hat and hat:IsShown() then
+        hat:Hide() -- option turned off: the marker moves back onto the face below
+    end
     if marker ~= nil and tex.SetSpriteSheetCell then
         local now = GetTime()
         if not force and tex._kgIconKey == "marker"

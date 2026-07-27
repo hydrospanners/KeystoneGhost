@@ -33,6 +33,9 @@ function KG.InitDB()
     db.scale = db.scale or 1 -- bar + roster scale (Edit Mode slider)
     if db.bgAlpha == nil then db.bgAlpha = 1 end -- chrome opacity (backdrop/border/accent), Edit Mode slider
     if db.bounce == nil then db.bounce = true end -- walk-cycle hop on your icon
+    if db.markerHat == nil then db.markerHat = false end -- easter egg (2026-07-28): the face
+                            -- stays your portrait; a raid marker perches tiny above it
+                            -- instead of replacing it (Edit Mode "Raid marker as a hat")
     db.runs = db.runs or {}   -- [charKey][mapID][level] = { [tier] = run } (one slot per chest tier)
     db.picks = db.picks or {} -- [pinnerCharKey][mapID] = { char, level, tier } — each
                               -- character's ONE pick per dungeon (Library pin; races any
