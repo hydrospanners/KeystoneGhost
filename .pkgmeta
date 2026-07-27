@@ -18,6 +18,7 @@ manual-changelog:
 # the publish dev-file filter strips them — but they are listed anyway as a
 # second fence.)
 ignore:
+  - .claude
   - .github
   - .pkgmeta
   - .gitignore
