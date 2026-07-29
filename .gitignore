@@ -1,1 +1,12 @@
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+*.log
+*.bak
+.vscode/
+.idea/
+
+# Never let the private RaiderIO replay fixture reach the public repo
 tests/rio-ghosts.txt
