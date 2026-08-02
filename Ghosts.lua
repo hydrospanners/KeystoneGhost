@@ -136,7 +136,11 @@ function G:BuildRioReference()
         -- The mirror runs in RaiderIO's OWN count units (rep.trash against their
         -- total); cross-total math maps it against the live scenario units (±1 on
         -- season retunes — cosmetic, fraction space absorbs it).
-        run = { durationSec = dur, total = total, snapshots = { { 0, 0, 0 } },
+        -- `level` is display-only here (the panel's `key` column): the summary
+        -- carries it, and without it the degraded row would read "—" against
+        -- ghosts that all state their key level.
+        run = { durationSec = dur, total = total, level = tonumber(rep.mythic_level),
+            snapshots = { { 0, 0, 0 } },
             bossKills = {}, bossNames = {}, bossCounts = {}, bossIDs = {}, bossJIDs = {} },
     }
 end
@@ -328,6 +332,27 @@ function G:BuildRioGhost(mapID)
     if not mapID then return nil end
     local replay = GetProviderReplay()
     if not replay then return nil end
+    -- Cached short-circuit (Fredrik 2026-07-28, docs/LIFECYCLE.md — the RaiderIO rule):
+    -- if we have ALREADY converted this exact replay, hand back the stored ghost without
+    -- re-running ConvertRioReplay. The identity peek reads only header fields
+    -- (keystone_run_id, or level + clear_time_ms + date for id-less replays) — no
+    -- event-log walk — so every repeat caller (Walk-In cache-on-sight retries, the
+    -- Warm-Up budget, a mid-run Library refresh) is cheap once the replay is banked, and
+    -- the Key Run never re-converts. A genuinely new replay falls through and converts.
+    local stored = G:GetStoredRioRun(mapID)
+    if stored then
+        local id = tonumber(replay.keystone_run_id)
+        if id then
+            if stored.rioRunId == id then return stored end
+        elseif not stored.rioRunId then
+            local durMs = tonumber(replay.clear_time_ms)
+            if durMs and stored.level == tonumber(replay.mythic_level)
+                and stored.durationSec == durMs / 1000
+                and stored.completedAt == M.IsoToEpoch(replay.date) then
+                return stored
+            end
+        end
+    end
     local raw = M.ConvertRioReplay(replay, { mapID = mapID, parTimeSec = S:GetParTimeSec(mapID) })
     if not raw then return nil end
     if raw.parTimeSec then
@@ -949,10 +974,14 @@ function G:BuildRoster(mapID, level, wantRoute)
     end
 
     local mine = db.runs[myKey] and db.runs[myKey][mapID]
-    addTiers(mine and mine[level], nil, 1) -- 2. own timed, this level
+    -- The tag is the ghost's IDENTITY and nothing else since 2026-07-29 — the panel
+    -- has columns for key level and chest tier now, and the old tags mixed all three
+    -- into one cell ("+11" for a near-level filler, "+2" for a same-level own run).
+    -- Your own runs read "you": your name repeated down three rows is noise.
+    addTiers(mine and mine[level], "you", 1) -- 2. own timed, this level
     for _, lvl in ipairs({ level - 1, level + 1, level - 2, level + 2 }) do -- 3. own timed, near levels
         if #out >= target then break end
-        addTiers(mine and mine[lvl], "+" .. lvl, 1)
+        addTiers(mine and mine[lvl], "you", 1)
     end
 
     for charKey, byMap in pairs(db.runs) do -- 4. own alts (non-imported foreign charKeys)
@@ -965,7 +994,7 @@ function G:BuildRoster(mapID, level, wantRoute)
                         for tier = KG.MAX_TIER, 1, -1 do
                             local run = t[tier]
                             if run and not run.importedFrom then
-                                add(run, ShortName(charKey) .. (lvl ~= level and (" +" .. lvl) or ""))
+                                add(run, ShortName(charKey)) -- level lives in the `key` column
                             end
                         end
                     end

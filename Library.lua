@@ -22,6 +22,7 @@ KG.Library = Library
 -- set word ("Raider.IO · Guild best") — static bump, his sanctioned fallback
 -- to dynamic sizing, and imports with realm names breathe too.
 local WIDTH, HEIGHT = 690, 440
+local MIN_H = 240 -- resize floor: chrome + a handful of rows stays a usable window
 local PAD = 12
 local TITLE_H, HEADER_H, GROUP_H, ROW_H, BOTTOM_H = 30, 18, 22, 24, 34
 -- Column x-offsets inside a row. Reaction round 2026-07-21 (Fredrik): the share
@@ -446,9 +447,14 @@ end
 
 local function BuildFrame()
     frame = CreateFrame("Frame", "KeystoneGhostLibrary", UIParent, "BackdropTemplate")
-    frame:SetSize(WIDTH, HEIGHT)
+    frame:SetSize(WIDTH, KG.db.libH or HEIGHT)
     frame:SetFrameStrata("HIGH")
     frame:SetMovable(true)
+    -- Vertically resizable (his ask 2026-07-30); width stays the column
+    -- contract's — the row cells sit on fixed x-offsets, so a wider window
+    -- would only buy dead space. Bounds pin the width to enforce that.
+    frame:SetResizable(true)
+    frame:SetResizeBounds(WIDTH, MIN_H, WIDTH, 2000)
     frame:SetClampedToScreen(true)
     Style.SkinPanel(frame)
     frame:Hide()
@@ -509,6 +515,7 @@ local function BuildFrame()
     local scroll = CreateFrame("ScrollFrame", "KeystoneGhostLibraryScroll", frame, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", PAD, -(TITLE_H + HEADER_H))
     scroll:SetPoint("BOTTOMRIGHT", -(PAD + 18), BOTTOM_H) -- 18: scrollbar gutter
+    frame.scroll = scroll -- kept: Refresh parks it on the dungeon you are standing in
     frame.content = CreateFrame("Frame", nil, scroll)
     frame.content:SetWidth(WIDTH - PAD * 2 - 18)
     frame.content:SetHeight(1)
@@ -584,10 +591,40 @@ local function BuildFrame()
 
     frame.footer = frame:CreateFontString(nil, "OVERLAY")
     Style.SetFont(frame.footer, 10)
-    frame.footer:SetPoint("BOTTOMRIGHT", -PAD, (BOTTOM_H - 10) / 2)
+    frame.footer:SetPoint("BOTTOMRIGHT", -(PAD + 14), (BOTTOM_H - 10) / 2) -- +14: the grip owns the corner
     frame.footer:SetTextColor(0.43, 0.43, 0.47)
 
-    frame:SetScript("OnShow", function() Library:Refresh() end)
+    -- Resize grip (his ask 2026-07-30), AutoPullLabeler's Map recipe verbatim —
+    -- the grabber art is a file path proven on HIS screen in that addon, not a
+    -- grep candidate. Width is pinned by the resize bounds, so the corner drag
+    -- only ever moves the bottom edge.
+    local grip = CreateFrame("Button", nil, frame)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", -2, 2)
+    grip:SetFrameLevel((frame:GetFrameLevel() or 0) + 10)
+    local gtex = grip:CreateTexture(nil, "OVERLAY")
+    gtex:SetAllPoints()
+    gtex:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    gtex:SetAlpha(0.6)
+    grip:SetScript("OnEnter", function() gtex:SetAlpha(1) end)
+    grip:SetScript("OnLeave", function() gtex:SetAlpha(0.6) end)
+    grip:SetScript("OnMouseDown", function() frame:StartSizing("BOTTOMRIGHT") end)
+    grip:SetScript("OnMouseUp", function()
+        frame:StopMovingOrSizing()
+        KG.db.libH = math.floor(frame:GetHeight() + 0.5)
+        -- Sizing re-derives the anchor; book the position too, or the next
+        -- session opens where a pre-resize drag left it.
+        local point, _, _, x, y = frame:GetPoint()
+        KG.db.libPos = { point = point, x = x, y = y }
+    end)
+
+    -- OPENING the window is what parks it on your current dungeon — not every
+    -- Refresh. A pin, a delete or an import must never yank the list out from
+    -- under someone who has scrolled somewhere else (Fredrik 2026-07-29).
+    frame:SetScript("OnShow", function()
+        Library.scrollToCurrent = true
+        Library:Refresh()
+    end)
 end
 
 --- Rebuild the visible list from the pure model. Pools grow as needed; unused
@@ -608,8 +645,10 @@ function Library:Refresh()
         or "No ghosts yet — finish a run here, or import one."
 
     local usedG, usedR, usedH, y = 0, 0, 0, 0
+    local groupY = {} -- [mapID] = pixel offset of that dungeon's header
     for _, g in ipairs(groups) do
         usedG = usedG + 1
+        if g.mapID then groupY[g.mapID] = y end
         local h = AcquireGroupHeader(usedG)
         h:SetPoint("TOPLEFT", 0, -y)
         h:SetPoint("TOPRIGHT", 0, -y)
@@ -617,9 +656,15 @@ function Library:Refresh()
         for _, r in ipairs(g.rows) do
             if r.hidden then nHidden = nHidden + 1 end
         end
-        h.text:SetText(n == 0 and (g.name .. " |cff6f6f78· no ghosts yet|r")
-            or string.format("%s |cff6f6f78· %d ghost%s%s|r", g.name, n, n == 1 and "" or "s",
-                nHidden > 0 and (", " .. nHidden .. " hidden") or ""))
+        -- The key's own deadline next to the dungeon name (his ask 2026-07-30):
+        -- a 30:53 row reads as "over the timer" without doing the arithmetic.
+        -- Unreadable par → the segment simply isn't there.
+        local par = g.mapID and S:GetParTimeSec(g.mapID)
+        local parSeg = par and (M.FormatClock(par) .. " · ") or ""
+        h.text:SetText(n == 0
+            and string.format("%s |cff6f6f78· %sno ghosts yet|r", g.name, parSeg)
+            or string.format("%s |cff6f6f78· %s%d ghost%s%s|r", g.name, parSeg, n,
+                n == 1 and "" or "s", nHidden > 0 and (", " .. nHidden .. " hidden") or ""))
         h.text:SetTextColor(Style.GetAccent())
         h:Show()
         y = y + GROUP_H
@@ -726,6 +771,26 @@ function Library:Refresh()
     for i = usedR + 1, #frame.rowPool do frame.rowPool[i]:Hide() end
     for i = usedH + 1, #frame.hintPool do frame.hintPool[i]:Hide() end
     frame.content:SetHeight(math.max(y, 1))
+    -- Open it standing in a dungeon and it opens ON that dungeon (Fredrik
+    -- 2026-07-29): eight groups deep, the one you are in is the one you want.
+    -- GetStagingMapID answers before the key starts too. The clamp is arithmetic
+    -- rather than GetVerticalScrollRange, which is still stale on the frame the
+    -- content height changed.
+    if Library.scrollToCurrent then
+        Library.scrollToCurrent = nil
+        local mapID = S:GetStagingMapID()
+        local at = mapID and groupY[mapID]
+        if at and frame.scroll then
+            -- The viewport height by construction, in case the frame has not been
+            -- measured yet on the very first open.
+            local viewH = frame.scroll:GetHeight() or 0
+            if viewH <= 0 then
+                viewH = (frame:GetHeight() or HEIGHT) - TITLE_H - HEADER_H - BOTTOM_H
+            end
+            local maxScroll = math.max(0, math.max(y, 1) - viewH)
+            frame.scroll:SetVerticalScroll(math.max(0, math.min(at, maxScroll)))
+        end
+    end
     -- Per-group hints carry the empty story now; the centered line remains only
     -- when even the season roster gave nothing to list (no groups at all).
     frame.empty:SetShown(usedG == 0)

@@ -1,8 +1,13 @@
 -- Blizzard Edit Mode integration via bundled LibEditMode (namespaced build — no LibStub).
 --
 -- The bar registers as an Edit Mode system: drag to reposition, click for a settings
--- dialog (Enabled, Dock under EllesmereUI timer, Scale, Background opacity, Walking
--- bounce, Extra pace cars +3/+2, Boss lap splits). While in Edit Mode
+-- dialog (Enabled, Dock under EllesmereUI timer, Scale, Background opacity, Display
+-- Ghost Roster + its size + one checkbox per Roster COLUMN). SIZE & POSITION since the
+-- 2026-07-28 sweep — how the race DISPLAYS (bounce, pace cars, markers, palettes) lives
+-- in the options panel; Options.lua's header carries the sharpened rule. The Roster's
+-- own controls are the documented exception, kept together here by that same sweep:
+-- it left the panel toggle and the size slider in Edit Mode, and the column checkboxes
+-- (2026-07-29) belong beside them rather than in a second dialog. While in Edit Mode
 -- the bar previews the synthetic test race so there is something to see and place.
 -- Dragging a docked bar is interpreted as "I want it free": the drop position is saved
 -- and attach mode turns off; re-docking is one checkbox.
@@ -11,6 +16,53 @@ local KG = NS.KG
 
 local EM = {}
 KG.EditMode = EM
+
+--- One checkbox per Ghost Roster column, generated from the panel's own column
+--- model (Splits.COLUMNS) so the two can never drift apart. Boss laps ride along
+--- as the last entry — they are columns too, just a repeating group of them.
+--- Column choices are Edit Mode's business by the architecture rule: they change
+--- what is DRAWN, not how the addon behaves.
+-- The panel's chest column is headed by an ICON, which says nothing in a settings
+-- list — so the checkbox spells the meaning out and shows the icon after it, the
+-- way Fredrik asked for it (2026-07-29): "write Chest upgraded level [icon]".
+local COLUMN_LABEL = {
+    chest = function() return "Column: chest upgrade level " .. (KG.Style.ChestIcon(12) or "") end,
+    level = function() return "Column: key level" end,
+}
+
+local function ColumnSettings()
+    local out = {}
+    for _, c in ipairs(KG.Splits.COLUMNS) do
+        local label = COLUMN_LABEL[c.id]
+        out[#out + 1] = {
+            kind = NS.LibEditMode.SettingType.Checkbox,
+            name = label and label() or ("Column: " .. c.header),
+            desc = c.id == "route"
+                and "Show each ghost's MDT route. The widest column — switching it on makes the panel wider than the bar."
+                or (c.id == "chest"
+                    and "How the key finished: +1 timed, +2 and +3 for the faster thresholds, a red dash for depleted."
+                    or ("Show the " .. c.header .. " column in the Ghost Roster.")),
+            default = c.default,
+            get = function() return KG.Splits.ColumnOn(c) end,
+            set = function(_, value)
+                KG.db[c.db] = value and true or false
+                KG.Splits:Refresh()
+            end,
+        }
+    end
+    out[#out + 1] = {
+        kind = NS.LibEditMode.SettingType.Checkbox,
+        name = "Column: boss laps",
+        desc = "Show the per-boss lap deltas (B1, B2, B3) against every ghost. Three columns wide — switch it off if the panel overhangs a narrow docked timer.",
+        default = true,
+        get = function() return KG.db.colLaps ~= false end,
+        set = function(_, value)
+            KG.db.colLaps = value and true or false
+            KG.Splits:Refresh()
+        end,
+    }
+    return out
+end
 
 function EM:Setup()
     local LEM = NS.LibEditMode
@@ -21,6 +73,7 @@ function EM:Setup()
     LEM:AddFrame(bar, function(frame)
         local point, _, relPoint, x, y = frame:GetPoint()
         KG.db.pos = { point = point, relPoint = relPoint, x = x, y = y }
+        KG.db.placed = true -- an Edit Mode drag IS placement: the MOVE ME show stands down
         if KG.db.attach then
             KG.db.attach = nil -- a manual drag means the user wants it free-floating
             print("|cff88ccffKeystoneGhost|r: undocked from the EllesmereUI timer (dragged; re-dock in Edit Mode settings).")
@@ -29,7 +82,7 @@ function EM:Setup()
         KG.Bar:Refresh()
     end, { point = "CENTER", x = 0, y = 260 }, "Keystone Ghost")
 
-    LEM:AddFrameSettings(bar, {
+    local settings = {
         {
             kind = LEM.SettingType.Checkbox,
             name = "Enabled",
@@ -82,27 +135,9 @@ function EM:Setup()
                 KG.Bar:Refresh(); KG.Splits:Refresh()
             end,
         },
-        {
-            kind = LEM.SettingType.Checkbox,
-            name = "Walking bounce",
-            desc = "Your icon does a little walk-cycle hop while moving — and stands still while you fight a boss.",
-            default = true,
-            get = function() return KG.db.bounce ~= false end,
-            set = function(_, value)
-                KG.db.bounce = value and true or false
-            end,
-        },
-        {
-            kind = LEM.SettingType.Checkbox,
-            name = "Extra pace cars (+3/+2)",
-            desc = "Show the +3 and +2 pace cars on the road. The +1 sweeper (key-depletion pace) always runs.",
-            default = true,
-            get = function() return KG.db.chestTicks ~= false end,
-            set = function(_, value)
-                KG.db.chestTicks = value and true or false
-                KG.Bar:Refresh()
-            end,
-        },
+        -- "Walking bounce" and "Extra pace cars (+3/+2)" lived here until the
+        -- 2026-07-28 sweep — they change how the race displays, not where
+        -- anything sits, so they moved to the options panel with the hat.
         {
             -- "How many Ghost Racers to show" (Fredrik 2026-07-22). Edit Mode, not
             -- the Options panel: this is literally how many runners get drawn on
@@ -126,9 +161,14 @@ function EM:Setup()
             end,
         },
         {
+            -- Renamed from "Boss lap splits" (Fredrik 2026-07-28): the toggle
+            -- always governed the WHOLE roster panel, not just the lap columns —
+            -- the name now says what it shows. db key stays `splits` (saved
+            -- choices carry over). Two sessions renamed this the same week; his
+            -- 07-28 wording won, and the laps got a column checkbox of their own.
             kind = LEM.SettingType.Checkbox,
-            name = "Boss lap splits",
-            desc = "Show per-boss lap deltas against every stored ghost below the bar.",
+            name = "Display Ghost Roster",
+            desc = "Show the Ghost Roster panel under the bar — every ghost racing you, with its live gap and per-boss laps.",
             default = true,
             get = function() return KG.db.splits ~= false end,
             set = function(_, value)
@@ -136,12 +176,20 @@ function EM:Setup()
                 KG.Splits:Refresh()
             end,
         },
-        -- Behavioral options (route-share toggles etc.) live in Options.lua —
-        -- the Blizzard AddOns panel. Edit Mode is visual/layout ONLY
-        -- (architecture rule, Fredrik 2026-07-20).
-    })
+        -- Everything else lives in Options.lua — the Blizzard AddOns panel:
+        -- the behavioral options (route-share toggles etc.) AND the
+        -- how-to-display ones (bounce, pace cars, death markers, marker hat,
+        -- palettes, % vs count). Edit Mode is SIZE & POSITION only
+        -- (architecture rule, Fredrik 2026-07-20; sharpened + swept 2026-07-28),
+        -- with the Ghost Roster's own controls as the standing exception — the
+        -- sweep itself left the panel toggle and size slider here, so the column
+        -- checkboxes appended below join them instead of moving house alone.
+    }
+    for _, s in ipairs(ColumnSettings()) do settings[#settings + 1] = s end
+    LEM:AddFrameSettings(bar, settings)
 
     LEM:RegisterCallback("enter", function()
+        KG.Bar.EndIntro() -- Edit Mode takes the stage from the first-login show
         KG.editModePreview = true
         KG.Bar:Refresh()
         KG.Splits:Refresh()

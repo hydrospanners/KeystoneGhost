@@ -93,6 +93,37 @@ function Style.RaiderIOLogo()
     return (ok and type(icon) == "string" and icon ~= "") and icon or nil
 end
 
+-- The Mythic+ chest, as an inline escape for any FontString (Fredrik 2026-07-29:
+-- "chest is one of the longest words but the info is very short +#" — so the Roster
+-- Panel's chest column wears the icon as its header instead).
+--
+-- Blizzard's own ChallengeMode end-of-run chest first; the Great Vault chest is the
+-- understudy. Both are atlases OTHER live addons render today (MRT and
+-- Details_MythicPlus respectively) — but a grep hit is a candidate, not proof (the
+-- 2026-07 lesson: a texture picked that way shipped invisible), so each is asked
+-- of C_Texture.GetAtlasInfo before use and the caller falls back to the WORD when
+-- neither answers. Sized from the atlas's own aspect so the chest is never squashed.
+local ATLAS_CANDIDATES = { "ChallengeMode-Chest", "gficon-chest-evergreen-greatvault-collect" }
+local chestAtlas -- resolved once per session: atlas info, or false for "none exists"
+function Style.ChestIcon(height)
+    if chestAtlas == nil then
+        chestAtlas = false
+        if C_Texture and C_Texture.GetAtlasInfo then
+            for _, name in ipairs(ATLAS_CANDIDATES) do
+                local ok, info = pcall(C_Texture.GetAtlasInfo, name)
+                if ok and type(info) == "table" and (info.width or 0) > 0 and (info.height or 0) > 0 then
+                    chestAtlas = { name = name, aspect = info.width / info.height }
+                    break
+                end
+            end
+        end
+    end
+    if not chestAtlas then return nil end
+    local h = height or 11
+    return string.format("|A:%s:%d:%d|a", chestAtlas.name, h,
+        math.max(1, math.floor(h * chestAtlas.aspect + 0.5)))
+end
+
 local function FontPath()
     local E = _G.EllesmereUI
     if E and E.GetFontPath then

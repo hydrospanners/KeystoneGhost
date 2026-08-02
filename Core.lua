@@ -20,6 +20,21 @@ loader:SetScript("OnEvent", function(self, event, addonName)
         KG.Options:Setup()
         KG.Library:Setup() -- the minimap button (the window itself builds lazily)
         KG.Comm:Setup() -- chat-share pipe: prefix, chat filters, link clicks
+        -- First-login placement (Fredrik 2026-07-28): a fresh install's bar was
+        -- invisible until its first key — and his field report says Edit Mode
+        -- didn't pick the frame up until the bar had drawn once. So logins stage
+        -- the demo loops with a MOVE ME handle above the bar (Bar.lua:
+        -- EnsureMoveMe / Bar.EndIntro) until the bar HAS BEEN PLACED — a drag
+        -- (handle or Edit Mode) or the handle's close stamps db.placed, and one
+        -- placement covers every character (position and DB are account-wide).
+        -- A key/Edit Mode//kg test only dismisses for the session — unplaced is
+        -- unplaced, the offer returns next login. Pre-0.12 installs are
+        -- grandfathered as placed in InitDB via schemaVersion.
+        if not KG.db.placed then
+            KG.introMode = true
+            KG.Bar:Refresh()
+            KG.Splits:Refresh()
+        end
     end
 end)
 
@@ -198,6 +213,7 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         KG.Bar:Refresh()
         KG.Splits:Refresh()
     elseif cmd == "test" then
+        KG.Bar.EndIntro() -- the deliberate demo outranks the first-login show
         KG.testMode = not KG.testMode
         if KG.testMode then KG.Bar.ResetTestLoop() end -- loop 1, fresh DB scan
         Print("test mode " .. (KG.testMode
@@ -283,6 +299,6 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         -- Fredrik's call — TASKS #6).
         Print("commands:")
         print("   /kg — the Ghost Library: browse, pin, share, delete your stored ghosts")
-        print("   /kg options — addon options (behavior; looks & layout live in Edit Mode)")
+        print("   /kg options — addon options (display + behavior; size & position live in Edit Mode)")
     end
 end

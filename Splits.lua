@@ -16,7 +16,10 @@ local Style = KG.Style
 local Splits = {}
 KG.Splits = Splits
 
-local MAX_ROWS = 4
+-- Row FRAMES built. The Edit Mode roster-size slider still caps at 4 ghosts; the
+-- extra frames exist because rows never leave mid-key (2026-07-29) — a full roster
+-- plus a switch onto a ghost outside it needs somewhere to draw.
+local MAX_ROWS = 6
 local MAX_LAPS = 4     -- column frames built (window shows at most LAP_WINDOW of them)
 local LAP_WINDOW = 3   -- visible boss columns (Fredrik 2026-07-21: window slides on kills)
 local PAD = 12
@@ -24,10 +27,124 @@ local ROW_H = 14
 local HEADER_H = 11
 local frame
 
--- Column x-offsets within a row (icon occupies 0..14).
-local COL_TAG, COL_DUR, COL_NOW, COL_LAP0, LAP_W = 18, 70, 106, 146, 41
+-- ── The columns (Fredrik 2026-07-29: `x name key chest time now B(n)`) ───────
+--
+-- The old `ghost` column carried three different facts by turns — a character
+-- name, a chest tier (`+2`), and on near-level fillers a key level (`+11`) — so
+-- two of them read as the same thing and none of them answered "is this ghost
+-- worth chasing". One fact per column now, each switchable in Edit Mode, and the
+-- x-offsets are COMPUTED from whichever are on rather than hardcoded.
+--
+-- Widths are for font size 10. The default set (everything but `route`) measures
+-- 358 px against the bar's 360, so the panel keeps its docked width; switching
+-- `route` on pushes past that and the panel grows wider than the bar rather than
+-- squeezing the boss columns.
+local COLUMNS = { -- his order, 2026-07-29: name · key · chest · route · time · now · B(n)
+    { id = "name",  header = "name",  w = 44, db = "colName",  default = true },
+    { id = "level", header = "key",   w = 24, db = "colKey",   default = true },
+    -- `chest` wears the M+ chest ICON as its header when the client has one, and
+    -- shrinks to 22 for it — the word is five characters to say what `+2` says in
+    -- two (Fredrik 2026-07-29). Build() swaps both in; the width here is the
+    -- word-fallback one.
+    { id = "chest", header = "chest", w = 34, db = "colChest", default = true },
+    { id = "route", header = "route", w = 84, db = "colRoute", default = false },
+    { id = "time",  header = "time",  w = 34, db = "colTime",  default = true, sort = "time" },
+    { id = "now",   header = "now",   w = 36, db = "colNow",   default = true, sort = "now" },
+}
+Splits.COLUMNS = COLUMNS -- EditMode builds one checkbox per entry
+local ICON_W = 18 -- the runner icon's slot, ahead of the first column
+local COL_GAP = 2
+local LAP_W = 40
+local PIN_W = 14  -- right gutter the pin glyph sits in
 
 local GRAY = "|cff8c8c8c"
+
+--- Is this column switched on? (`colLaps` follows the same rule, defaulting on.)
+local function ColumnOn(col)
+    local v = KG.db[col.db]
+    if v == nil then return col.default end
+    return v and true or false
+end
+Splits.ColumnOn = ColumnOn
+
+--- x-offsets for the switched-on columns, plus the width the panel needs.
+---
+--- TWO CONTRACTS, by dock state (Fredrik 2026-07-29):
+---   * **Free-floating** (`availW` nil) — the panel lays out every switched-on
+---     column and the BAR follows its width, so the stack stays one window however
+---     many columns you pick.
+---   * **Docked** under the EllesmereUI timer (`availW` = that width) — the timer's
+---     width is law. Columns are placed left to right while they fit and the rest
+---     simply do not show: "if it is anchored to ellesmere then we just fix width
+---     and ghost roster has a bunch of columns that doesn't show." The stop is
+---     hard, not clever — the first column that will not fit ends the row, rather
+---     than a narrower one behind it jumping the queue and scrambling the order.
+--- Cached on the resulting signature; this runs on every refresh tick.
+local layoutCache
+local function Layout(availW)
+    local laps = KG.db.colLaps ~= false
+    local sig = (laps and "L" or "-") .. (availW and math.floor(availW) or "free")
+    local x, cols = ICON_W, {}
+    local spilled = false
+    for _, c in ipairs(COLUMNS) do
+        local on = ColumnOn(c)
+        if on and availW and PAD + x + c.w + COL_GAP + PIN_W + PAD > availW then
+            spilled = true -- and everything after it goes too
+        end
+        sig = sig .. (on and (spilled and "x" or "1") or "0")
+        if on and not spilled then
+            cols[#cols + 1] = { col = c, x = x }
+            x = x + c.w + COL_GAP
+        end
+    end
+    -- The FULL lap window is reserved whether or not the bosses are dead yet: a
+    -- panel that changed width on your first kill would be worse than a gap. Docked,
+    -- only the boss columns that fit are reserved at all.
+    local lapSlots = 0
+    if laps and not spilled then
+        lapSlots = LAP_WINDOW
+        if availW then
+            lapSlots = math.max(0, math.min(LAP_WINDOW,
+                math.floor((availW - (PAD + x + PIN_W + PAD)) / LAP_W)))
+        end
+    end
+    sig = sig .. lapSlots
+    if layoutCache and layoutCache.sig == sig then return layoutCache end
+    layoutCache = { sig = sig, cols = cols, laps = laps, lapSlots = lapSlots, lapX = x,
+        width = PAD + x + lapSlots * LAP_W + PIN_W + PAD }
+    return layoutCache
+end
+
+--- Swap the chest column's header word for the client's M+ chest icon, and shrink
+--- the column to suit (34 → 22: `+2` needs far less room than the word did). The
+--- word and the wider slot stay when the client has no chest atlas to give, so the
+--- header is never a blank cell. Called once from Build; safe to call again.
+function Splits.ResolveChestHeader()
+    for _, c in ipairs(COLUMNS) do
+        if c.id == "chest" and c.header == "chest" then
+            local icon = KG.Style and KG.Style.ChestIcon and KG.Style.ChestIcon(10)
+            if icon then
+                c.header, c.w = icon, 22
+                layoutCache = nil -- widths moved: the cached offsets are stale
+            end
+        end
+    end
+end
+
+--- The width every switched-on column needs, unconstrained — what the free-floating
+--- BAR sizes itself to (Bar.FreeWidth), and what the offline suite measures.
+function Splits.LayoutWidth() return Layout().width end
+
+--- Which columns survive in `availW` (the docked case), as a list of ids — exposed
+--- for the offline suite and for answering "what am I losing at this width".
+function Splits.ColumnsFitting(availW)
+    local out = {}
+    for _, p in ipairs(Layout(availW).cols) do out[#out + 1] = p.col.id end
+    return out
+end
+
+--- How many boss columns `availW` leaves room for (0 when it leaves none).
+function Splits.LapSlotsFor(availW) return Layout(availW).lapSlots end
 
 --- Verdict-colored delta (palette-aware — color vision setting swaps the pair).
 local function ColorDelta(sec, goodWhenPositive)
@@ -78,13 +195,28 @@ end
 
 --- The display row list (shared with Bar.lua's runner lanes). Each entry:
 --- { run, tag, colorIdx (base pairing position), live (RIO lead) }.
+---
+--- Rows only ever ARRIVE during a key (Fredrik 2026-07-29: "don't remove rows from
+--- the ghost roster after a key has started"). A ghost that is not a roster member
+--- used to be drawn only while it was RACED — so switching away from the Raider.IO
+--- ghost, which is priority 5 and often crowded out, deleted the very row you would
+--- click to switch back. Every row drawn is remembered by the Recorder and re-offered
+--- here for the rest of the key, carrying its original tag and pairing color.
 function Splits.BuildDisplayRows(st)
     local ref = st.ref
     local racedRun = ref and ref.run
     local rows = {}
+    local seen = {}
+    local function Add(entry)
+        if entry.run and not seen[entry.run] then
+            seen[entry.run] = true
+            rows[#rows + 1] = entry
+        end
+    end
     local lead
     if racedRun and ref.live then
         lead = { run = racedRun, tag = "RIO", live = true }
+        seen[racedRun] = true -- inserted at the front once the sort is done
     end
     for idx, entry in ipairs(st.roster or {}) do
         -- While the live MIRROR leads (degraded path), the stored Raider.IO row
@@ -92,21 +224,28 @@ function Splits.BuildDisplayRows(st)
         -- identity on screen at a time; the stored row returns when the mirror
         -- leaves. Display-only, so the stable-order rule is untouched.
         if not (lead and entry.run.legacy == "RIO") then
-            rows[#rows + 1] = { run = entry.run, tag = entry.tag, colorIdx = idx }
+            Add({ run = entry.run, tag = entry.tag, colorIdx = idx })
         end
     end
-    if racedRun and not ref.live then
-        local present = false
-        for _, e in ipairs(rows) do
-            if e.run == racedRun then present = true break end
-        end
-        if not present then
-            rows[#rows + 1] = { run = racedRun,
-                tag = (racedRun.importedFrom and (racedRun.importedFrom:match("^([^%-]+)") or "import"))
-                    or (racedRun.legacy == "RIO" and "RIO")
-                    or M.TierLabel(racedRun.chests) }
+    for _, entry in ipairs(st.shown or {}) do -- rows this key has already drawn
+        -- The rule stops the SYSTEM from taking a row away; the player still can.
+        -- Hiding a ghost in the Library (the eye) is exactly that, so a hidden run
+        -- leaves even though it was on screen a moment ago.
+        if not entry.run.hidden and not (lead and entry.run.legacy == "RIO") then
+            Add({ run = entry.run, tag = entry.tag, colorIdx = entry.colorIdx })
         end
     end
+    if racedRun and not ref.live then -- a switch onto a ghost no list offered yet
+        Add({ run = racedRun,
+            tag = (racedRun.importedFrom and (racedRun.importedFrom:match("^([^%-]+)") or "import"))
+                or (racedRun.legacy == "RIO" and "RIO")
+                -- A pace car has no chests, and TierLabel called it "?" — which is
+                -- what a player with no ghosts and no Raider.IO saw on row 1.
+                or (ref.kind == "season" and "season") or (ref.kind == "par" and "par")
+                or M.TierLabel(racedRun.chests) })
+    end
+    if lead then KG.Recorder:NoteShownRow(lead) end
+    for _, e in ipairs(rows) do KG.Recorder:NoteShownRow(e) end
 
     local sort = KG.db.rosterSort
     if sort and sort.col == "time" then
@@ -175,19 +314,23 @@ local function Build()
     frame.header:SetPoint("TOPLEFT", PAD, -4)
     frame.header:SetPoint("TOPRIGHT", -PAD, -4)
     frame.header:SetHeight(HEADER_H)
-    frame.hTag = Col(frame.header, COL_TAG, 48, 9)
-    frame.hTag:SetText("ghost")
-    frame.hDur = Col(frame.header, COL_DUR, 34, 9)
-    frame.hDur:SetText("time")
-    frame.hNow = Col(frame.header, COL_NOW, 38, 9)
-    frame.hNow:SetText("now")
+    -- Every column's widget exists from the start; the layout pass decides which
+    -- ones are placed and shown. Cheaper than building on toggle, and it keeps
+    -- Edit Mode's checkboxes instant.
+    Splits.ResolveChestHeader()
+    frame.hCells = {}
+    for _, c in ipairs(COLUMNS) do
+        local fs = Col(frame.header, 0, c.w, 9)
+        fs:SetText(c.header)
+        fs:SetAlpha(0.55)
+        frame.hCells[c.id] = fs
+    end
     frame.hLaps = {}
     for i = 1, MAX_LAPS do
-        frame.hLaps[i] = Col(frame.header, COL_LAP0 + (i - 1) * LAP_W, LAP_W - 2, 9)
+        frame.hLaps[i] = Col(frame.header, 0, LAP_W - 2, 9)
         frame.hLaps[i]:SetText("B" .. i)
+        frame.hLaps[i]:SetAlpha(0.55)
     end
-    for _, h in ipairs({ frame.hTag, frame.hDur, frame.hNow }) do h:SetAlpha(0.55) end
-    for _, h in ipairs(frame.hLaps) do h:SetAlpha(0.55) end
 
     -- Sortable headers (Fredrik 2026-07-21): click time/now to sort the rows
     -- (and the track lanes with them); click ghost to restore the priority
@@ -195,20 +338,22 @@ local function Build()
     -- Ellesmere's own sort-header recipe (BlizzardSkin SortHeaderBar): a solid
     -- white HIGHLIGHT-layer wash at 10%, drawn by the engine only while
     -- hovered. The active header wears accent + ^/v (state, not hover).
-    local function HeaderButton(fs, col)
+    local function HeaderButton(col)
         local b = CreateFrame("Button", nil, frame.header)
-        b:SetPoint("LEFT", frame.header, "LEFT", fs:GetPoint(1) and select(4, fs:GetPoint(1)) or 0, 0)
-        b:SetSize(fs:GetWidth(), HEADER_H)
-        b:SetScript("OnClick", function() Splits.SetSort(col) end)
+        b:SetSize(col.w, HEADER_H)
+        b:SetScript("OnClick", function() Splits.SetSort(col.sort) end)
         local hov = b:CreateTexture(nil, "HIGHLIGHT")
         hov:SetTexture("Interface\\Buttons\\WHITE8x8")
         hov:SetVertexColor(1, 1, 1, 0.1)
         hov:SetAllPoints(b)
         return b
     end
-    HeaderButton(frame.hTag, nil)
-    HeaderButton(frame.hDur, "time")
-    HeaderButton(frame.hNow, "now")
+    -- `name` has no sort of its own: clicking it restores the priority order (it
+    -- inherits what the old `ghost` header did).
+    frame.hButtons = {}
+    for _, c in ipairs(COLUMNS) do
+        if c.sort or c.id == "name" then frame.hButtons[c.id] = HeaderButton(c) end
+    end
 
     frame.rows = {}
     for i = 1, MAX_ROWS do
@@ -228,12 +373,11 @@ local function Build()
         row.icon:SetSize(10, 10)
         row.icon:SetPoint("LEFT", 2, 0)
 
-        row.cTag = Col(row, COL_TAG, 48)
-        row.cDur = Col(row, COL_DUR, 34)
-        row.cNow = Col(row, COL_NOW, 38)
+        row.cells = {}
+        for _, c in ipairs(COLUMNS) do row.cells[c.id] = Col(row, 0, c.w) end
         row.cLaps = {}
         for j = 1, MAX_LAPS do
-            row.cLaps[j] = Col(row, COL_LAP0 + (j - 1) * LAP_W, LAP_W - 2)
+            row.cLaps[j] = Col(row, 0, LAP_W - 2)
         end
 
         -- Raced-row highlight: accent edge bar + faint wash.
@@ -286,10 +430,15 @@ local function Build()
     frame:Hide()
 end
 
+--- The row's ghost in a sentence: the `name` cell reads "you", a title does not.
+function Splits.RowTitle(tag)
+    return tag == "you" and "Your" or (tag or "?")
+end
+
 --- Tooltip lines describing where a ghost came from.
 local function RowTip(run, tag)
     local dateFn = date or os.date
-    local tip = { tag .. " ghost — " .. M.FormatClock(run.durationSec or 0) }
+    local tip = { Splits.RowTitle(tag) .. " ghost — " .. M.FormatClock(run.durationSec or 0) }
     if run.legacy == "RIO" then
         tip[#tip + 1] = "Converted Raider.IO " .. (run.rioSource or "replay")
     end
@@ -320,17 +469,57 @@ function Splits:Refresh()
     local racedRun = ref and ref.run
     local n = 0
 
+    -- Column layout: place whatever is switched on, hide the rest, and re-anchor
+    -- only when the on/off set actually changed. Docked, the timer's width is the
+    -- budget and the columns are fitted to it; free, the bar follows the columns.
+    local barW = bar:GetWidth() or 0
+    local docked = KG.Bar.IsDocked and KG.Bar.IsDocked()
+    local L = Layout(docked and barW > 0 and barW or nil)
+    if frame.layoutSig ~= L.sig then
+        frame.layoutSig = L.sig
+        local function Place(region, x)
+            region:ClearAllPoints()
+            region:SetPoint("LEFT", x, 0)
+            region:Show()
+        end
+        local placed = {}
+        for _, p in ipairs(L.cols) do
+            placed[p.col.id] = true
+            Place(frame.hCells[p.col.id], p.x)
+            local b = frame.hButtons[p.col.id]
+            if b then
+                b:ClearAllPoints()
+                b:SetPoint("LEFT", frame.header, "LEFT", p.x, 0)
+                b:Show()
+            end
+            for _, row in ipairs(frame.rows) do Place(row.cells[p.col.id], p.x) end
+        end
+        for _, c in ipairs(COLUMNS) do
+            if not placed[c.id] then
+                frame.hCells[c.id]:Hide()
+                if frame.hButtons[c.id] then frame.hButtons[c.id]:Hide() end
+                for _, row in ipairs(frame.rows) do row.cells[c.id]:Hide() end
+            end
+        end
+        for j = 1, MAX_LAPS do
+            local x = L.lapX + (j - 1) * LAP_W
+            Place(frame.hLaps[j], x) -- shown/hidden per kill count below
+            for _, row in ipairs(frame.rows) do Place(row.cLaps[j], x) end
+        end
+    end
+
     -- Sort indicators: the active header wears accent + a direction mark.
     local sort = KG.db.rosterSort
-    local function HeaderText(fs, base, col)
+    local function HeaderText(id, base, col)
+        local fs = frame.hCells[id]
         if sort and sort.col == col then
             fs:SetText("|cff" .. accentHex .. base .. (sort.desc and " v" or " ^") .. "|r")
         else
             fs:SetText(base)
         end
     end
-    HeaderText(frame.hDur, "time", "time")
-    HeaderText(frame.hNow, "now", "now")
+    HeaderText("time", "time", "time")
+    HeaderText("now", "now", "now")
 
     -- Boss-column WINDOW (Fredrik 2026-07-21): at most LAP_WINDOW columns. The
     -- window slides on YOUR kills — after your 2nd kill B1 leaves (kill 2 is
@@ -343,8 +532,8 @@ function Splits:Refresh()
         end
     end
     local winStart = math.min(math.max(1, (st.bosses or 0) - 1), math.max(1, maxB - LAP_WINDOW + 1))
-    local nLapCols = math.min(LAP_WINDOW, maxB - winStart + 1)
-    if maxB == 0 then nLapCols = 0 end
+    local nLapCols = math.min(L.lapSlots, maxB - winStart + 1)
+    if maxB == 0 or not L.laps then nLapCols = 0 end
     for i = 1, MAX_LAPS do
         if i <= nLapCols then
             frame.hLaps[i]:SetText("B" .. (winStart + i - 1))
@@ -361,8 +550,37 @@ function Splits:Refresh()
         row.runRef = run
         row.tip = RowTip(run, tag)
 
-        row.cTag:SetText("|cff" .. accentHex .. tag .. "|r")
-        row.cDur:SetText(M.FormatClock(run.durationSec or 0))
+        local cell = row.cells
+        -- name: WHOSE ghost this is and nothing else — your own runs read "you",
+        -- an alt or a sender reads their character name, the replay reads RIO.
+        -- Ellipsized rather than clipped: a long name should say it was cut.
+        cell.name:SetText("|cff" .. accentHex .. M.Ellipsize(tag, 8) .. "|r")
+        -- key: plain when it matches the key you are IN, grey when it does not —
+        -- the one thing that says whether this ghost's time is worth chasing
+        -- (Fredrik 2026-07-29). Pace cars (season best / par) carry no level.
+        if run.level then
+            local off = st.level and run.level ~= st.level
+            cell.level:SetText((off and GRAY or "") .. "+" .. run.level .. (off and "|r" or ""))
+        else
+            cell.level:SetText(GRAY .. "—|r")
+        end
+        -- chest: the run's RESULT — the upgrade level, or a RED dash when the key
+        -- depleted (his call 2026-07-29; the Library still spells "Depleted" out,
+        -- but a 22 px column under a chest icon says it in one character, and the
+        -- COLOR is what separates it from the grey dash meaning "no chests to report",
+        -- which is what a pace car shows). BadHex, so color-vision modes swap it.
+        if run.chests then
+            cell.chest:SetText(run.chests > 0 and M.TierLabel(run.chests)
+                or ("|cff" .. Style.BadHex() .. "—|r"))
+        else
+            cell.chest:SetText(GRAY .. "—|r")
+        end
+        -- route: "n/a" on a replay (it cannot carry one) reads differently from
+        -- "—" for a run recorded without one — the Ghost Library's distinction.
+        local routeName = run.routeName and M.Ellipsize(M.StripColors(run.routeName), 13)
+            or (run.legacy == "RIO" and "n/a" or "—")
+        cell.route:SetText(GRAY .. routeName .. "|r")
+        cell.time:SetText(M.FormatClock(run.durationSec or 0))
         -- Per-row Gap arming (SCENARIOS B9): each ghost's `now` stays a grey 0:00
         -- until both YOU and THAT ghost have progress — same rule as the bar's Gap.
         -- Live state goes in as (count, total): exact integers same-total, fraction
@@ -381,9 +599,9 @@ function Splits:Refresh()
         -- Verdict colors belong to the ACTIVE row alone (Fredrik 2026-07-21:
         -- "too many colors that draw attention"); non-raced rows read neutral.
         if armed then
-            row.cNow:SetText(isRaced and ColorDelta(now, true) or PlainDelta(now))
+            cell.now:SetText(isRaced and ColorDelta(now, true) or PlainDelta(now))
         else
-            row.cNow:SetText(GRAY .. "0:00|r")
+            cell.now:SetText(GRAY .. "0:00|r")
         end
         -- Identity-matched laps (SCENARIOS C2): the visible window's column j is
         -- boss winStart+j-1 — this ghost's kill of that ordinal, paired with
@@ -457,15 +675,19 @@ function Splits:Refresh()
     -- the player's explicit click (the system itself still never reorders).
     for _, entry in ipairs(Splits.BuildDisplayRows(st)) do
         if n >= MAX_ROWS then break end
-        SetRow(entry.run, entry.tag or M.TierLabel(entry.run.chests),
-            entry.run == racedRun, entry.colorIdx)
+        SetRow(entry.run, entry.tag or "you", entry.run == racedRun, entry.colorIdx)
     end
     if n == 0 then frame:Hide(); return end
     for i = n + 1, MAX_ROWS do frame.rows[i]:Hide() end
 
     frame:ClearAllPoints()
     frame:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -4)
-    frame:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -4)
+    -- The panel always ends where the bar ends. Docked that is the timer's width
+    -- and Layout has already dropped whatever did not fit; free, the bar has
+    -- widened to the columns (Bar.FreeWidth), so the two agree either way. An
+    -- explicit width rather than a second anchor, re-set every refresh so a resize
+    -- of the docked timer carries immediately.
+    frame:SetWidth(barW > 0 and barW or L.width)
     frame:SetHeight(8 + HEADER_H + n * ROW_H)
     frame:Show()
 end

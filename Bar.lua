@@ -46,8 +46,14 @@ local HATCH_TILE = 32
 local SWEPT_WAKE = 0.13 -- the sweeper's red wake, as a fraction of the track (~44 px)
 
 -- Style.GREEN / Style.RED / Splits-grey as inline escapes — for coloring single
--- tokens inside an otherwise neutral FontString.
-local GREEN_HEX, RED_HEX, GRAY_HEX = "|cff4dcc4d", "|cffe65959", "|cff8c8c8c"
+-- tokens inside an otherwise neutral FontString. The verdict pair is built PER
+-- CALL: these were frozen literals of the DEFAULT pair (`4dcc4d`/`e65959`), so the
+-- Pull Indicator went on speaking red/green after the color-vision setting had
+-- swapped every other verdict on screen (2026-07-29 sweep). The grey is not a
+-- verdict and stays fixed.
+local function GreenHex() return "|cff" .. Style.GoodHex() end
+local function RedHex() return "|cff" .. Style.BadHex() end
+local GRAY_HEX = "|cff8c8c8c"
 
 -- ── Test mode: synthetic ghost + simulated player so the bar can be inspected anywhere ──
 local TEST_SPEED = 10 -- 10x: a ~28min run demos in ~3min; 20x made real data look jerky
@@ -166,7 +172,7 @@ local function EnsureDemoDeaths(run)
 end
 
 local function SeedTestSwitch()
-    if KG.testMode then
+    if KG.testMode or KG.introMode then -- the first-login show runs the real loop rotation
         test.loopN = (test.loopN or 0) + 1
         test.scenario = (test.loopN % 2 == 1) and "real" or "rio"
     else
@@ -188,7 +194,9 @@ local function SeedTestSwitch()
         test.simRun = SimRunOf(base)
         test.ov = nil
         test.attached = nil
-        print("|cff88ccffKeystoneGhost|r: test loop — Raider.IO ghost only (the first-run look).")
+        if KG.testMode then -- the intro show runs the same loops, but quietly
+            print("|cff88ccffKeystoneGhost|r: test loop — Raider.IO ghost only (the first-run look).")
+        end
     else
         test.rioRef = nil
         test.simRun = SimRunOf(test.run)
@@ -368,7 +376,7 @@ end
 --- Shared live state for the bar and the splits panel (nil when nothing to race).
 --- Edit Mode preview reuses the synthetic test race so the frame has something to show.
 function Bar.GetLiveState()
-    if KG.testMode or KG.editModePreview then return TestState() end
+    if KG.testMode or KG.editModePreview or KG.introMode then return TestState() end
     local R = KG.Recorder
     if not R:IsActive() or not R.currentRef then return nil end
     local elapsed = R:GetElapsed()
@@ -387,6 +395,9 @@ function Bar.GetLiveState()
         -- Stable roster: keyed to YOUR route, never to the raced ghost — a switch
         -- moves the highlight, not the rows (Fredrik 2026-07-20).
         roster = mapID and KG.Ghosts:GetRoster(mapID, level, route and route.name) or nil,
+        -- Rows drawn earlier this key: they keep their place even after the roster
+        -- stops offering them (Fredrik 2026-07-29 — nothing leaves mid-key).
+        shown = R:ShownRows(), level = level,
         deathCount = R:GetDeathCountLive(), deathTimeLost = select(2, R:GetDeathCountLive()),
         par = R:GetParTime(), ref = R.currentRef,
         lastSwitch = R.lastSwitch, pinned = R:IsPinned(),
@@ -485,9 +496,13 @@ local function Build()
     -- so the stripes hold 45° whatever width the bar is docked at.
     frame.sweptZone = frame.track:CreateTexture(nil, "BACKGROUND", nil, 3)
     frame.sweptZone:SetTexture(HATCH, "REPEAT", "REPEAT")
-    frame.sweptZone._faint = CreateColor(0.9, 0.35, 0.35, 0.12)
-    frame.sweptZone._strong = CreateColor(0.9, 0.35, 0.35, 0.9)
-    frame.sweptZone:SetGradient("HORIZONTAL", frame.sweptZone._faint, frame.sweptZone._strong)
+    -- The wake's red is the VERDICT red, not a literal copy of it: the Gap Zone's
+    -- angry-sweeper ramp already derived from Style.RED, so a hardcoded wake meant
+    -- the two reds parted company the moment the color-vision setting changed
+    -- (2026-07-29 sweep). ApplyGradient re-tints it when the palette moves.
+    frame.sweptZone:SetGradient("HORIZONTAL",
+        CreateColor(Style.RED[1], Style.RED[2], Style.RED[3], 0.12),
+        CreateColor(Style.RED[1], Style.RED[2], Style.RED[3], 0.9))
     frame.sweptZone:Hide()
     frame.bossTicks = {}
     frame.runners = {} -- roster ghosts drawn as small racers below the line
@@ -547,11 +562,24 @@ local function Build()
     frame.playerIcon = frame.playerHover:CreateTexture(nil, "OVERLAY")
     frame.playerIcon:SetSize(16, 16)
     frame.playerIcon:SetPoint("CENTER")
+    -- THE MARKER HAT (easter egg, Fredrik 2026-07-28; Options panel "Raid marker as
+    -- a hat" — panel, not Edit Mode: it changes what the icon WEARS, not layout):
+    -- with the option on, the face keeps the portrait and a carried raid
+    -- target marker perches up here instead — 8 px, overlapping the head's top edge
+    -- like a crown. Deliberately NOT animated with the walk cycle (the hop moves
+    -- only the icon texture; anchors don't follow animations), so the head bounces
+    -- under a floating hat — upgrade the hat to hopping only if that reads wrong in
+    -- the field. Painted/hidden by RefreshPlayerIcon, which owns every marker rule.
+    frame.markerHat = frame.playerHover:CreateTexture(nil, "OVERLAY", nil, 1)
+    frame.markerHat:SetSize(8, 8)
+    frame.markerHat:SetPoint("BOTTOM", frame.playerIcon, "TOP", 0, -2)
+    frame.markerHat:Hide()
     Bar.RefreshPlayerIcon(true)
 
     -- The walk cycle ("it would be fking hilarious" — Fredrik, verbatim): a tiny hop
     -- while you're actually moving down the road. Stops when your course freezes —
-    -- so you visibly STAND at a boss while fighting it. Edit Mode toggle.
+    -- so you visibly STAND at a boss while fighting it. Options-panel toggle
+    -- (swept from Edit Mode 2026-07-28 — display, not layout).
     local walk = frame.playerIcon:CreateAnimationGroup()
     walk:SetLooping("REPEAT")
     local hop = walk:CreateAnimation("Translation")
@@ -725,7 +753,7 @@ end
 --- state so the whole flow is clickable in /kg test; live clicks go to the Recorder.
 function Bar.HandleRowClick(run)
     if not run then return end
-    if KG.testMode or KG.editModePreview then
+    if KG.testMode or KG.editModePreview or KG.introMode then
         if not test.ov then return end
         local raced = test.attached or test.run
         if run == raced then
@@ -759,18 +787,53 @@ end
 --- it goes straight into the C-side sprite-sheet cell pick on the 4x4 marker sheet,
 --- which accepts secrets (the EXBoss/BliZzi-proven recipe; the old readNum guard
 --- turned every secret into nil and the icon stayed portrait forever). While marked
---- this reapplies every call — two secrets can't be diffed — so a mid-run marker
---- change lands within a tick. Portraits are often BLACK until the client fires a
---- portrait update, so Core re-calls this with force on UNIT_PORTRAIT_UPDATE and
---- zone-in; the no-marker path stays cached.
+--- the sheet must be reapplied blind — two secrets can't be diffed — but on a 0.5 s
+--- CLOCK, not every 0.1 s bar update (the CPU pass, 2026-07-28): a mid-run marker
+--- CHANGE still lands within a tick, GAINING a marker repaints instantly (the cached
+--- key was "portrait"), and the C-side texture+cell work drops from 10/s to 2/s.
+--- Portraits are often BLACK until the client fires a portrait update, so Core
+--- re-calls this with force on UNIT_PORTRAIT_UPDATE and zone-in (force also skips
+--- the throttle); the no-marker path stays cached.
 function Bar.RefreshPlayerIcon(force)
     local tex = frame and frame.playerIcon
     if not tex then return end
     local marker = KG.Scenario:GetPlayerRaidMarkerOpaque() -- opaque: possibly secret
+    -- MARKER HAT mode (easter egg, 2026-07-28): the marker is CONSUMED here — painted
+    -- onto the 8 px hat with the same blind cell-pick on the same 0.5 s clock (only
+    -- the VALUE is secret; presence nil-tests fine) — so the face path below never
+    -- sees it and stays the cached portrait. Performance-neutral vs the full-face
+    -- marker: the identical repaint budget lands on a smaller texture, and the face
+    -- never flips paint paths at all.
+    local hat = frame.markerHat
+    if KG.db.markerHat and hat then
+        if marker ~= nil and hat.SetSpriteSheetCell then
+            local now = GetTime()
+            if force or not hat:IsShown() or now - (hat._kgAt or 0) >= 0.5 then
+                hat:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
+                if pcall(hat.SetSpriteSheetCell, hat, marker, 4, 4) then
+                    hat._kgAt = now
+                    hat:Show()
+                else
+                    hat:Hide() -- cell-pick refused (API drift): never wear a garbage tile
+                end
+            end
+        else
+            hat:Hide() -- unmarked: bare head
+        end
+        marker = nil
+    elseif hat and hat:IsShown() then
+        hat:Hide() -- option turned off: the marker moves back onto the face below
+    end
     if marker ~= nil and tex.SetSpriteSheetCell then
+        local now = GetTime()
+        if not force and tex._kgIconKey == "marker"
+            and now - (tex._kgMarkerAt or 0) < 0.5 then
+            return -- still wearing a marker, repainted < 0.5 s ago: skip this update
+        end
         tex:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
         if pcall(tex.SetSpriteSheetCell, tex, marker, 4, 4) then
             tex._kgIconKey = "marker"
+            tex._kgMarkerAt = now
             return
         end
         force = true -- the sheet just splatted over the icon: repaint the portrait
@@ -791,46 +854,21 @@ function Bar.ApplyScale()
     if splits then splits:SetScale(s) end
 end
 
---- END MODE (Fredrik 2026-07-27): the delta + Count Gap block lives in the frame's
---- top-right corner, which is directly above the end of the road — so Mario, parked
---- at the finish line through a long last boss fight, stands on top of it (his two
---- screenshots: "+0.0%" clipped live, and the Photo's wider "13:04 · +3" mostly gone).
---- THE NUMBERS MOVE, and that is the whole fix — "skip the grey, move the numbers
---- only". The run-off wall that was tried first (a hatched no-go strip the road
---- stopped short of, so Mario stopped short too) is gone by his call; it was scenery
---- charging rent for a job 15 px of text motion does.
---- SECOND ROUND (Fredrik 2026-07-27, screenshot: his icon wearing a blue square raid
---- marker sitting on the Count Gap): the one 18 px step end mode used to take is a
---- guess made once, so it under-shoots a wide number block and moves the numbers on
---- runs where nothing was ever in the way. Mario now PUSHES them: the block yields
---- only while his icon actually overlaps it, by exactly the distance needed, and
---- glides back the moment he walks on. His zone is directly above the track and the
---- numbers live in that same band, so the overlap is real geometry, not a fudge.
---- `marioX` is the icon's center in track space (nil = nothing to yield to).
---- Still clamped so the block never backs into the "vs <ghost>" label on a narrow
---- (docked) bar, and eased so a camera jump can't make the text flick.
-local ICON_HALF, YIELD_GAP = 10, 6
-local function PlaceNumbers(marioX)
+--- END MODE, RETIRED (Fredrik 2026-07-28). The delta + Count Gap block used to
+--- YIELD — slide left for as long as Mario's icon overlapped it — because the block
+--- and his icon shared the 18 px band above the track. Option C1 (2026-07-27) ended
+--- that overlap by giving him the band alone: his icon tops out 19 px above the
+--- track, the Count Gap starts at 37. Nothing up there can collide any more. But the
+--- yield's overlap test was pure-x and never learned that, so it kept shoving the
+--- numbers aside every time he neared the finish — the scrapped behaviour still
+--- running on top of the change that replaced it ("now it does both"). So: the block
+--- stands at home, always. The one real neighbour left is the Finish Photo's close
+--- button (18 px, frame top-right; the live bar hides it), and the photo asks for
+--- that much room with `reserveClose`. No easing — the position no longer moves.
+local CLOSE_W = 18
+local function PlaceNumbers(reserveClose)
     local W = frame.track:GetWidth() or WIDTH
-    local home = W - 3
-    local rightEdge = home
-    if marioX then
-        local numW = math.max(frame.delta:GetStringWidth() or 0,
-            frame.subDelta:GetStringWidth() or 0)
-        -- Overlap test in x: the block spans [home - numW, home], the icon
-        -- [marioX ± ICON_HALF]. Only an icon reaching into that span moves anything.
-        if marioX + ICON_HALF > home - numW - YIELD_GAP then
-            rightEdge = math.max(marioX - ICON_HALF - YIELD_GAP,
-                (frame.refLabel:GetStringWidth() or 0) + 8 + numW)
-            rightEdge = math.min(rightEdge, home)
-        end
-    end
-    -- Ease toward the target; snap on big jumps (bar resize, run change, first frame).
-    local cur = frame._smEdge
-    if cur and math.abs(cur - rightEdge) > 1 and math.abs(cur - rightEdge) < 120 then
-        rightEdge = cur + (rightEdge - cur) * 0.35
-    end
-    frame._smEdge = rightEdge
+    local rightEdge = W - 3 - (reserveClose and CLOSE_W or 0)
     frame.delta:ClearAllPoints()
     frame.delta:SetPoint("TOPRIGHT", frame.track, "TOPLEFT", rightEdge, TRACK_Y - NUM_TOP_Y)
     frame.subDelta:ClearAllPoints()
@@ -881,7 +919,7 @@ function Bar:Update()
     -- Snaps on big discontinuities (new run / ref change) and on backwards resets.
     -- Walk-speed cap is in ROAD seconds: test mode compresses time, so scale it up
     -- there or every motion saturates the cap into stutter (2026-07-19 field report).
-    local capMul = (KG.testMode or KG.editModePreview) and TEST_SPEED or 1
+    local capMul = (KG.testMode or KG.editModePreview or KG.introMode) and TEST_SPEED or 1
     local function ease(cur, target)
         if cur == nil or math.abs(cur - target) > 0.25 or target < cur - 0.02 then
             return target
@@ -902,9 +940,8 @@ function Bar:Update()
         return (v < 0 and -1) or (v > 1 and 1) or 0
     end
     -- Finish line: scrolls in from the right during the final stretch, and the camera
-    -- stops with it. Its arrival is also END MODE — the numbers step aside for the
-    -- icon that is about to park on the line (PlaceNumbers, applied below once their
-    -- text is set: its clamp needs the string widths). One flip per run.
+    -- stops with it. (Its arrival used to double as END MODE, the cue for the numbers
+    -- to step aside for a parking Mario; that yield is retired — see PlaceNumbers.)
     local endMode = vx(1) <= 1.001
     if endMode then
         frame.finishLine:ClearAllPoints()
@@ -917,15 +954,18 @@ function Bar:Update()
     -- Pace cars: linear racers that complete the road in exactly par×frac. The +1 car
     -- is the sweeper — if it passes you, the key depletes. +2/+3 cars are optional.
     if st.par and st.par > 0 and st.elapsed then
-        local cars = { { 0.6, "+3" }, { 0.8, "+2" }, { 1.0, "+1" } }
+        -- One visibility key per car (Fredrik 2026-07-28, superseding the single
+        -- "+3/+2" toggle): the +1 sweeper is hideable too — its swept-road wake
+        -- goes with it below; the gap zone's depletion warning is untouched.
+        local cars = { { 0.6, "+3", "paceCar3" }, { 0.8, "+2", "paceCar2" }, { 1.0, "+1", "paceCar1" } }
         -- Tags are drawn SWEEPER FIRST (i = 3 → 1, which is also left → right): early
         -- in a run all three cars are bunched at the start line, and when they overlap
         -- the one whose identity matters is the +1.
         local tagged = {}
         for i = 3, 1, -1 do
-            local frac, tag = cars[i][1], cars[i][2]
+            local frac, tag, carKey = cars[i][1], cars[i][2], cars[i][3]
             local f = frame.paceCars[i]
-            if tag == "+1" or KG.db.chestTicks ~= false then
+            if KG.db[carKey] ~= false then
                 local carCourse = st.elapsed / (st.par * frac)
                 local dim = pinned(carCourse) ~= 0 and 0.5 or 1 -- lurking at an edge
                 local cx = px(carCourse)
@@ -933,9 +973,17 @@ function Bar:Update()
                 f:SetPoint("CENTER", frame.track, "LEFT", cx, 0)
                 local cr, cg, cb, ca
                 if tag == "+1" then
-                    cr, cg, cb, ca = 0.9, 0.35, 0.35, 0.8 -- the sweeper
+                    cr, cg, cb, ca = Style.RED[1], Style.RED[2], Style.RED[3], 0.8 -- the sweeper
                     -- The swept road: red hatch on the ground it has just taken.
                     local z = frame.sweptZone
+                    -- Re-tint only when the palette actually moved: SetGradient
+                    -- bakes the colors in, so a color-vision change mid-session
+                    -- would otherwise leave the wake on the old red forever.
+                    if z._paletteR ~= cr or z._paletteG ~= cg or z._paletteB ~= cb then
+                        z._paletteR, z._paletteG, z._paletteB = cr, cg, cb
+                        z:SetGradient("HORIZONTAL", CreateColor(cr, cg, cb, 0.12),
+                            CreateColor(cr, cg, cb, 0.9))
+                    end
                     local wake = math.min(cx, W * SWEPT_WAKE)
                     if wake > 2 then
                         z:ClearAllPoints()
@@ -983,6 +1031,7 @@ function Bar:Update()
                 f:Show()
             else
                 f:Hide()
+                if tag == "+1" then frame.sweptZone:Hide() end -- the wake is the sweeper's
             end
         end
     else
@@ -1144,7 +1193,7 @@ function Bar:Update()
     -- Baselines are per display-source: a test-mode flip, a new reference (new run),
     -- or the frame having been hidden across a run must never read as fresh deaths
     -- (phantom mega-knock). On a source change the baselines just re-seed.
-    local kbSrc = (KG.testMode or KG.editModePreview) and "test" or tostring(ref)
+    local kbSrc = (KG.testMode or KG.editModePreview or KG.introMode) and "test" or tostring(ref)
     if frame._kbSrc ~= kbSrc then
         frame._kbSrc = kbSrc
         frame._kb, frame._kbPot = nil, nil
@@ -1295,7 +1344,7 @@ function Bar:Update()
             local lit = Bar._previewRun == run
             f:SetAlpha(lit and 1 or (pinned(rCourse) ~= 0 and 0.3 or 0.55))
             f.tip = {
-                (entry.tag or M.TierLabel(run.chests)) .. " ghost — " .. M.FormatClock(run.durationSec or 0),
+                KG.Splits.RowTitle(entry.tag) .. " ghost — " .. M.FormatClock(run.durationSec or 0),
                 run.importedFrom and ("From: " .. run.importedFrom) or "One of your runs",
             }
             f:Show()
@@ -1457,9 +1506,9 @@ function Bar:Update()
     frame.subDelta:SetTextColor(cc[1], cc[2], cc[3])
 
     frame.refLabel:SetText("vs " .. (ref.label or "?"))
-    -- Both texts are set: the numbers can take their place — they measure themselves
-    -- and step aside for exactly as much of Mario as is actually in the way.
-    PlaceNumbers(exV)
+    -- Both texts are set: the numbers can take their place — a fixed one, since
+    -- Mario has his own lane and never reaches up into theirs.
+    PlaceNumbers()
 
     -- Pull position (needs an MDT route matching this dungeon): you vs the ghost. Your
     -- side uses the stateful tracker (boss criteria + thresholds — APL's model); the
@@ -1488,9 +1537,9 @@ function Bar:Update()
         local you = string.format("Pull #%d", yourPull)
         local gho = string.format("Ghost #%d", ghostPull)
         if yourPull > ghostPull then
-            you, gho = GREEN_HEX .. you .. "|r", RED_HEX .. gho .. "|r"
+            you, gho = GreenHex() .. you .. "|r", RedHex() .. gho .. "|r"
         elseif ghostPull > yourPull then
-            you, gho = RED_HEX .. you .. "|r", GREEN_HEX .. gho .. "|r"
+            you, gho = RedHex() .. you .. "|r", GreenHex() .. gho .. "|r"
         end
         -- Route metadata (Fredrik 2026-07-20: "use the full meta data"): the name is
         -- stripped of any embedded color codes BEFORE the byte-based ellipsis, then
@@ -1568,8 +1617,27 @@ end
 --- that frame exists (it is created lazily by EllesmereUIMythicTimer, hence re-checked on
 --- every refresh, not just at login). Width follows the timer so the stack reads as one UI.
 --- When free, the position belongs to Edit Mode (saved as point/relPoint/x/y in db.pos).
+--- Free-floating, the BAR follows the ROSTER (Fredrik 2026-07-29): switch on enough
+--- columns and the panel needs more than 360, so the bar widens to match instead of
+--- letting the panel hang off its corner — the two read as one window. Docked is the
+--- other contract entirely: there the timer's width is law, the bar never moves, and
+--- the panel drops the columns that do not fit (Splits.Layout).
+--- Never narrower than the design width, and never widened for a panel that is
+--- switched off.
+local function FreeWidth()
+    if KG.db.splits == false then return WIDTH end
+    local need = KG.Splits and KG.Splits.LayoutWidth and KG.Splits.LayoutWidth() or 0
+    return need > WIDTH and need or WIDTH
+end
+
+--- Is the bar currently docked under the EllesmereUI timer? (Splits asks: docked
+--- means fit the columns to the width; free means the bar will follow them.)
+function Bar.IsDocked()
+    return frame ~= nil and frame._attachMode == "ellesmere"
+end
+
 local function ApplyFreePosition()
-    frame:SetSize(WIDTH, BAR_H)
+    frame:SetSize(FreeWidth(), BAR_H)
     local pos = KG.db.pos
     if pos and pos.point then
         frame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
@@ -1583,7 +1651,16 @@ end
 local function UpdateAttachment()
     local target = KG.db.attach == "ellesmere" and _G.EllesmereUIMythicTimerStandalone or nil
     local mode = target and "ellesmere" or "free"
-    if frame._attachMode == mode then return end
+    if frame._attachMode == mode then
+        -- Free-floating, the roster's column set can change under us (an Edit Mode
+        -- checkbox) without the dock state changing at all — so the width is kept
+        -- in step every refresh, not just when the anchoring flips.
+        if mode == "free" then
+            local w = FreeWidth()
+            if math.abs((frame:GetWidth() or 0) - w) > 0.5 then frame:SetWidth(w) end
+        end
+        return
+    end
     frame._attachMode = mode
     frame:ClearAllPoints()
     if target then
@@ -1626,13 +1703,9 @@ function Bar:ShowSummary(s)
     local aR, aG, aB = Style.GetAccent()
     frame.subDelta:SetText(M.FormatClock(s.finalTime or 0) .. " · " .. M.TierLabel(s.chests))
     frame.subDelta:SetTextColor(aR, aG, aB)
-    -- The photo is permanently "at the end", so the numbers stand aside from the
-    -- podium — this readout is the widest one in the addon ("13:04 · +3"), and it is
-    -- the one his screenshot caught hiding behind Mario. Stepping left of the podium
-    -- clears the close button in the corner too. Mario parks at W - 4 below, and the
-    -- yield is measured from there; no easing in a photograph.
-    frame._smEdge = nil
-    PlaceNumbers((frame.track:GetWidth() or WIDTH) - 4)
+    -- The photo is the one place the close button shows, and this readout is the
+    -- widest in the addon ("13:04 · +3") — so it asks for the corner to be left free.
+    PlaceNumbers(true)
     frame.pullText:Hide()
     for i = 1, #frame.runners do frame.runners[i]:Hide() end
     if frame.deathMarks then
@@ -1693,6 +1766,65 @@ function Bar:ShowSummary(s)
     frame:Show()
 end
 
+-- ── Login placement: the MOVE ME show (Fredrik 2026-07-28) ───────────────────
+-- A fresh install's bar was invisible until its first key, and Edit Mode didn't
+-- pick the frame up until the bar had drawn once (his field report) — a catch-22
+-- for brand-new users. So logins stage the bar running the demo loops (the
+-- /kg test rotation, chat-quiet) with a drag handle above it, UNTIL the bar has
+-- been PLACED: dragging the handle, dragging in Edit Mode, or closing the handle
+-- ("I'm happy where it is" — dock users never need a drag) all stamp db.placed,
+-- and one placement covers every character. A key starting (fresh, or ADOPTED
+-- on a reconnect mid-run — both recorder doors kill the show), Edit Mode
+-- opening, or /kg test only ends the show for the session — unplaced means the
+-- offer returns next login, on any character. Combat hides the whole show
+-- (Refresh's stand-down below) and it returns when the fight ends: an
+-- unrequested tutorial never sits over live play.
+local function EnsureMoveMe()
+    if frame.moveMe then return frame.moveMe end
+    local m = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    m:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 4)
+    m:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0, 4)
+    m:SetHeight(24)
+    Style.SkinPanel(m)
+    m:EnableMouse(true)
+    m:RegisterForDrag("LeftButton")
+    m.text = m:CreateFontString(nil, "OVERLAY")
+    Style.SetFont(m.text, 11)
+    m.text:SetPoint("CENTER", -8, 0)
+    m.text:SetTextColor(Style.GetAccent())
+    m.text:SetText("Keystone Ghost — drag me into place, then close me")
+    -- Dragging moves the BAR (the strip rides it); same save + undock rules as
+    -- an Edit Mode drag, minus the chat note — this IS the placement tutorial.
+    m:SetScript("OnDragStart", function() frame:StartMoving() end)
+    m:SetScript("OnDragStop", function()
+        frame:StopMovingOrSizing()
+        local point, _, relPoint, x, y = frame:GetPoint()
+        KG.db.pos = { point = point, relPoint = relPoint, x = x, y = y }
+        KG.db.attach = nil -- dragged free: the Edit Mode drag rule
+        KG.db.placed = true -- PLACED: the show stands down for good (all characters)
+        Bar:InvalidatePosition()
+        Bar:Refresh()
+    end)
+    local close = Style.CloseButton(m, function()
+        KG.db.placed = true -- deliberate close = "keep it right here": that IS placement
+        Bar.EndIntro()
+    end)
+    close:SetPoint("RIGHT", -4, 0)
+    frame.moveMe = m
+    return m
+end
+
+--- End the first-login show (close ×, a real key, Edit Mode, /kg test). Safe to
+--- call any time — no-ops unless the intro is running.
+function Bar.EndIntro()
+    if not KG.introMode then return end
+    KG.introMode = nil
+    Bar.ResetTestLoop() -- drop the demo cast; a later /kg test reseeds fresh
+    if frame and frame.moveMe then frame.moveMe:Hide() end
+    Bar:Refresh()
+    KG.Splits:Refresh()
+end
+
 function Bar:Refresh()
     if not frame then Build() end
     UpdateAttachment()
@@ -1704,7 +1836,22 @@ function Bar:Refresh()
     -- Recording never ran in raids (every recorder path is C_ChallengeMode-
     -- gated); this stands the DISPLAY down. Splits follows via bar:IsShown().
     if KG.Scenario:InRaidInstance() and not KG.editModePreview then frame:Hide(); return end
-    if KG.testMode or KG.editModePreview or (KG.Recorder:IsActive() and KG.Recorder.currentRef) then
+    -- The MOVE ME handle rides above the bar during the placement show only
+    -- (a child frame: it hides with the bar wherever the bar hides).
+    if KG.introMode then
+        -- Combat stand-down (Fredrik 2026-07-28: placement "must not disrupt
+        -- play if it appears mid combat"): a reconnect can land an unplaced
+        -- install straight into a fight, and the show persists until placed —
+        -- a demo race and a mouse-blocking strip have no business over live
+        -- combat. The 0.5 s ticker keeps calling Refresh, so the show returns
+        -- within a tick of combat dropping; placement state is untouched.
+        if InCombatLockdown() then frame:Hide(); return end
+        EnsureMoveMe():Show()
+    elseif frame.moveMe and frame.moveMe:IsShown() then
+        frame.moveMe:Hide()
+    end
+    if KG.testMode or KG.editModePreview or KG.introMode
+        or (KG.Recorder:IsActive() and KG.Recorder.currentRef) then
         frame.closeBtn:Hide() -- the number block places itself (PlaceNumbers)
         Bar:Update()
     elseif KG.Recorder.summary then

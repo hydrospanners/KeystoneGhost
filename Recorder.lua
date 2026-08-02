@@ -47,12 +47,49 @@ KG.Recorder = R
 local RECONCILE_INTERVAL = 5 -- failsafe capture cadence; the events do the real work
 local MIN_SNAPSHOTS = 3
 
+-- RaiderIO acquisition budget (Fredrik 2026-07-28; phases per docs/LIFECYCLE.md):
+-- acquiring the Raider.IO ghost means reaching into RaiderIO's PRIVATE replay provider
+-- and running the heavy ConvertRioReplay (~10 ms and thousands of throwaway tables on a
+-- long replay). Through 0.11.0 the tick arms did that on EVERY 0.5 s tick for the first
+-- minute of the KEY RUN — up to ~120 probes a key, both a crash risk (poking another
+-- addon's absent / half-loaded / unexpected internals over and over) and a CPU + GC
+-- spike right through the opening pull, worst for a long replay CleanRun keeps rejecting
+-- (> 5000 nodes) so it never lands. Now that work is confined to WARM-UP (the countdown),
+-- where nothing is raceable and a spike is free — but a rejected replay would still
+-- re-convert every Warm-Up tick, so cap it: RIO_MAX_ACQUIRE attempts, RIO_ACQUIRE_GAP
+-- apart. The ~10 s Warm-Up gives three tries at +3/+6/+9 s; Walk-In cache-on-sight and
+-- the Key-Activation pickup run before that. Not banked by the time the gates drop → the
+-- Key Run does zero RaiderIO conversion and races season/par (self-heals next key).
+local RIO_MAX_ACQUIRE = 3
+local RIO_ACQUIRE_GAP = 3 -- Warm-Up seconds between attempts (first at +3 s, last at +9 s)
+
 local rec = { active = false }
 -- The Raced-Ghost Switch core lives OUTSIDE rec: it holds references to run tables
 -- from the ghost DB, and rec is persisted wholesale as KeystoneGhostDB.liveRun —
 -- serializing those references would dump entire runs into the liveRun slot.
 local overtake = nil
 R.currentRef = nil
+-- Same reason, same shelf: the sticky row set (Roster Panel rows never leave once a
+-- key has started) and the stashed live RaiderIO mirror both hold run tables.
+local shownRows, shownSeen = {}, {}
+R.rioMirror = nil
+
+--- May we spend a RaiderIO acquisition attempt at Warm-Up `elapsed` seconds (measured
+--- from Key Activation)? It CONSUMES an attempt (counts it, stamps the next-allowed time)
+--- whenever it returns true, so use it AS the guard. Returns false once the window is
+--- spent. Keyed to Warm-Up elapsed, not GetTime, so a client restart's clock reset can't
+--- confuse it; a mid-key /reload skips Warm-Up entirely (gates already down).
+local function RioAcquireDue(elapsed)
+    if rec.rioAcquireDone then return false end
+    if (rec.rioTries or 0) >= RIO_MAX_ACQUIRE then
+        rec.rioAcquireDone = true -- window spent: stop reaching into RaiderIO this key
+        return false
+    end
+    if elapsed < (rec.rioNextTryT or RIO_ACQUIRE_GAP) then return false end
+    rec.rioTries = (rec.rioTries or 0) + 1
+    rec.rioNextTryT = elapsed + RIO_ACQUIRE_GAP
+    return true
+end
 
 function R:IsActive() return rec.active end
 
@@ -111,8 +148,10 @@ function R:OnKeyStart()
         KG.testMode = false
         print("|cff88ccffKeystoneGhost|r: test mode off — a real key is starting.")
     end
+    KG.Bar.EndIntro() -- a real key outranks the first-login MOVE ME show (no-op otherwise)
     R:AbandonPartySpecSweep() -- a new key outranks last run's spec backfill
     R.summary = nil -- a new race replaces the last verdict
+    R:ResetRacingState() -- last key's sticky rows and mirror stash die with it
     rec.active = true
     rec.startTime = GetTime()
     -- CHALLENGE_MODE_START fires when the COUNTDOWN begins; the race must not until
@@ -134,6 +173,7 @@ function R:OnKeyStart()
     rec.partial = nil
     rec.seededKills = 0
     rec.lastCaptureGT, rec.lastReconcile = nil, nil -- capture coalescing / heartbeat state
+    rec.rioTries, rec.rioNextTryT, rec.rioAcquireDone = 0, nil, nil -- Raider.IO Warm-Up budget
 
     -- Payload-expansion context (DESIGN "Payload expansion"): captured AT RUN TIME —
     -- spec/guild/level change later; history must not rewrite. Party ratings are
@@ -238,6 +278,11 @@ end
 function R:AdoptLiveRun(lr, elapsed)
     R:AbandonPartySpecSweep()
     R.summary = nil
+    R:ResetRacingState() -- the pre-reload rows are gone with the Lua state; start clean
+    -- The OTHER door into an active recording (OnKeyStart is the first): a
+    -- reconnect mid-key on an unplaced install must not leave the MOVE ME
+    -- show's demo data masking the real adopted race (Fredrik 2026-07-28).
+    KG.Bar.EndIntro()
     rec = lr
     rec.active = true
     local now = GetTime()
@@ -248,6 +293,10 @@ function R:AdoptLiveRun(lr, elapsed)
     -- (the gap fold); lastCaptureGT could collide after a client restart reset
     -- GetTime, so it never survives adoption.
     rec.lastCaptureGT, rec.lastReconcile = nil, nil
+    -- A mid-key /reload lands in the Key Run (Warm-Up is over), so the acquisition window
+    -- won't re-open; reset it for clean bookkeeping. AdoptLiveRun re-derives the reference
+    -- through BuildReference below, which picks up the banked ghost cheaply (short-circuit).
+    rec.rioTries, rec.rioNextTryT, rec.rioAcquireDone = nil, nil, nil
     rec.pendingEngage = nil -- a mid-fight reload: that engage may have resolved unseen
 
     -- Deaths during the gap arrive count-only; fold them into one timeline entry.
@@ -285,7 +334,54 @@ function R:Abort()
     KG.db.liveRun = nil -- the run is over (reset / left the instance): nothing to resume
     R.currentRef = nil
     R.lastSwitch = nil
+    R:ResetRacingState()
     KG.PullTrack:Reset(nil)
+end
+
+-- ── The sticky row set (Fredrik 2026-07-29) ──────────────────────────────────
+--
+-- "Don't remove rows from the ghost roster after a key has started." A ghost that
+-- is NOT a roster member used to get a row only while it was RACED — the Raider.IO
+-- ghost is priority 5 and often crowded out, so switching away from it deleted the
+-- only thing you could click to switch back. So: every row the panel has drawn this
+-- key is remembered, tag and pairing color included, and keeps its place until the
+-- key ends. The set only grows; rows are added (a switch onto an outside ghost) and
+-- REPLACED (mirror → converted ghost, same Raider.IO identity), never dropped from
+-- under the player.
+
+--- Remember a drawn display row: { run, tag, colorIdx }. Idempotent per run table,
+--- and inert outside a real key so test mode / demo refreshes seed nothing.
+function R:NoteShownRow(entry)
+    if not rec.active or not entry or not entry.run then return end
+    if shownSeen[entry.run] then return end
+    shownSeen[entry.run] = true
+    shownRows[#shownRows + 1] = { run = entry.run, tag = entry.tag, colorIdx = entry.colorIdx }
+end
+
+--- The remembered rows, in the order they first appeared.
+function R:ShownRows() return shownRows end
+
+--- Hand one ghost's row to another — the ONLY sanctioned way a run leaves the set,
+--- and only when the newcomer is the same identity (the converted Raider.IO ghost
+--- taking over from the live mirror). Position, tag and pairing color stay put, so
+--- the row does not appear to move. No-op if the old run never had a row.
+function R:ReplaceShownRow(oldRun, newRun)
+    if not oldRun or not newRun or not shownSeen[oldRun] then return end
+    shownSeen[oldRun] = nil
+    for _, e in ipairs(shownRows) do
+        if e.run == oldRun then
+            e.run = newRun
+            shownSeen[newRun] = true
+            return
+        end
+    end
+end
+
+--- Drop the per-key racing scratch state: sticky rows and the mirror stash. Called
+--- at key start and on Abort — never mid-key.
+function R:ResetRacingState()
+    shownRows, shownSeen = {}, {}
+    R.rioMirror = nil
 end
 
 --- Swap the Raced Ghost onto `run` (auto Overtake or manual row click). The ref swap
@@ -335,7 +431,15 @@ function R:HandleRowClick(run)
         return ov.pinned and "pinned" or "unpinned"
     end
     KG.Overtake.ManualSwitch(ov, run)
-    R:SetRacedRun(run)
+    -- Racing the live MIRROR again restores the stashed LIVE ref, not a wrapper
+    -- around its half-written timeline: `live` is what routes the row and the Gap
+    -- through LiveDelta/nowCount. RefForRun would hand back a frozen ghost.
+    if R.rioMirror and run == R.rioMirror.run then
+        R.currentRef = R.rioMirror
+        R.lastSwitch = { at = GetTime(), run = run }
+    else
+        R:SetRacedRun(run)
+    end
     return "switched"
 end
 
@@ -487,12 +591,49 @@ function R:OnDeathCountUpdated()
     rec.deathTimeLost = timeLost
 end
 
+--- Acquire the Raider.IO ghost during WARM-UP (docs/LIFECYCLE.md), budgeted, so the heavy
+--- ConvertRioReplay lands before the gates drop and the Key Run pays nothing. `elapsed` =
+--- seconds since Key Activation. Re-derives the reference (cheap once the replay is banked
+--- — BuildRioGhost short-circuits) and adopts it when RaiderIO upgrades a linear fallback,
+--- or the degraded mirror, to a real replay ghost. Never overrides a personal / imported /
+--- pinned pick — those outrank the replay and are already what we want.
+function R:AcquireRioBudgeted(elapsed)
+    local ref = R.currentRef
+    if ref and not (ref.kind == "season" or ref.kind == "par" or ref.live) then return end
+    if not RioAcquireDue(elapsed) then return end
+    local newRef = rec.mapID and KG.Ghosts:BuildReference(rec.mapID, rec.level)
+    if not newRef then return end
+    -- Take a FULL convert always (may be a mirror→full upgrade); take the mirror itself
+    -- only from a linear fallback (never re-take a fresh mirror over the one we run).
+    local take = newRef.kind == "rio"
+        or (newRef.live and (not ref or ref.kind == "season" or ref.kind == "par"))
+    if take and newRef.run and newRef.run ~= (ref and ref.run or nil) then
+        -- This is the ONLY place the reference swaps by itself now, so it is also where
+        -- the sticky-row rule is honoured: the newcomer inherits the outgoing ghost's
+        -- roster row rather than adding a second one. A no-op before the first draw,
+        -- which is the usual case — Warm-Up is short and the panel may not be up yet.
+        if ref and ref.run then R:ReplaceShownRow(ref.run, newRef.run) end
+        if R.rioMirror and newRef.kind == "rio" then
+            R.rioMirror = nil -- the full convert supersedes the degraded mirror
+        end
+        R.currentRef = newRef
+        overtake = KG.Overtake.New(newRef.run, newRef.kind == "import" or newRef.startPinned == true)
+        R.lastSwitch = { at = GetTime(), run = newRef.run } -- crossfade the pickup in
+    end
+end
+
 function R:OnTick()
     if not rec.active or not rec.startTime then return end
     if not S:IsChallengeActive() then return end
     local now = GetTime()
+    if rec.awaitingTimer then
+        -- WARM-UP (the countdown — docs/LIFECYCLE.md): do the heavy RaiderIO conversion
+        -- HERE, before the gates drop, so the Key Run never pays for it. `elapsed` counts
+        -- from Key Activation (rec.startTime) — the only clock that runs during Warm-Up.
+        R:AcquireRioBudgeted(now - rec.startTime)
+    end
     local t = AnchorClock(now)
-    if not t then return end -- countdown running: hold at the start line
+    if not t then return end -- still in Warm-Up: hold at the start line
 
     -- Reconcile heartbeat: a change-guarded capture, so it is a no-op while the
     -- events deliver — and a ≤ 5 s self-heal when one goes missing.
@@ -501,59 +642,24 @@ function R:OnTick()
         Capture()
     end
 
-    -- The Raider.IO ghost's three tick arms (first-class replay, 2026-07-21):
-    --   1. live MIRROR raced (degraded path): keep mirroring; and while the first
-    --      minute lasts, keep trying the FULL convert — RaiderIO initializes its
-    --      provider around key start, so the upgrade usually lands in seconds.
-    --      The S7 lastSwitch crossfade announces it; startPinned carries over.
-    --   2. converted rio ghost raced: every RECONCILE_INTERVAL, peek at the
-    --      provider — the player can flip replays in RaiderIO's own dropdown
-    --      MID-RUN (verified in their source: applies instantly while playing).
-    --      A different keystone_run_id rebuilds ghost + ref + Overtake in one
-    --      tick (no window where the bar reads a wiped run). An unreachable
-    --      provider is NOT a change: the stored ghost keeps racing.
-    --      Polling only while a rio ref is RACED — replacing a non-raced roster
-    --      row's run mid-run would perturb the stable order for nothing.
-    --   3. linear fallback raced (season/par): first-minute upgrade to the rio
-    --      slot, full-first (BuildRioRef: convert → cache → mirror).
+    -- RAIDER.IO DURING THE KEY RUN (docs/LIFECYCLE.md — the RaiderIO rule): never convert.
+    -- The reference was settled during Walk-In / Warm-Up; the only thing left is to keep
+    -- the degraded live mirror fed, a cheap summary read with no event-log conversion. A
+    -- full converted ghost races straight from stored data and a linear fallback stays as
+    -- it is — both need nothing here. (Mid-run replay switching and the mirror→full
+    -- upgrade were dropped on purpose: each costs a Key-Run conversion; both are niche and
+    -- both return on the next key from the Walk-In cache. Two arms that briefly lived here
+    -- on 2026-07-29 — the mirror→full upgrade carrying its roster row over, and the pace
+    -- car handing its row to a late replay — went with them: both were conversions, and
+    -- the acquisition budget now settles all of it before the gates drop.)
+    --
+    -- The mirror is fed from the STASH, not from the raced ref: its roster row survives a
+    -- switch away (rows never leave mid-key), and a row whose ghost stopped moving would
+    -- lie about the gap. Same one guarded summary read per tick either way.
     local ref = R.currentRef
-    if ref and ref.live then
-        KG.Ghosts:UpdateRioMirror(ref, t)
-        if t < 60 then
-            local run = KG.Ghosts:BuildRioGhost(rec.mapID)
-            if run then
-                local newRef = KG.Ghosts:RefForRun(run)
-                if newRef then
-                    newRef.startPinned = ref.startPinned
-                    R.currentRef = newRef
-                    overtake = KG.Overtake.New(run, ref.startPinned == true)
-                    R.lastSwitch = { at = GetTime(), run = run }
-                end
-            end
-        end
-    elseif ref and ref.kind == "rio" then
-        if now - (rec.lastRioCheck or 0) >= RECONCILE_INTERVAL then
-            rec.lastRioCheck = now
-            local run = KG.Ghosts:BuildRioGhost(rec.mapID)
-            if run and run ~= ref.run then -- same replay returns the SAME stored table
-                local newRef = KG.Ghosts:RefForRun(run)
-                if newRef then
-                    newRef.startPinned = ref.startPinned
-                    R.currentRef = newRef
-                    overtake = KG.Overtake.New(run, ref.startPinned == true)
-                    R.lastSwitch = { at = GetTime(), run = run }
-                end
-            end
-        end
-    elseif t < 60 and ref and (ref.kind == "season" or ref.kind == "par") then
-        local rio = KG.Ghosts:BuildRioRef(rec.mapID)
-        if rio then
-            R.currentRef = rio
-            -- Upgrading to the replay re-seats the Overtake core too (autos still
-            -- never switch TO it — S12 kept 2026-07-21; an automatic upgrade from
-            -- a linear ghost is never pinned).
-            overtake = KG.Overtake.New(rio.run, false)
-        end
+    if ref and ref.live then R.rioMirror = ref end
+    if R.rioMirror then
+        KG.Ghosts:UpdateRioMirror(R.rioMirror, t)
     end
 
     R:EvaluateSwitch(t)
@@ -591,11 +697,17 @@ function R:OnKeyEnd()
         ref = ref, -- Bar:ShowSummary draws the finish photo from this
     }
     if diff then
+        -- The verdict pair comes from Style, never from a literal: these two lines
+        -- had `4dcc4d`/`e65959` baked in — the DEFAULT green and red exactly — so
+        -- the one place the result is stated in words ignored the color-vision
+        -- setting that every on-screen verdict obeys (2026-07-29 sweep).
         local msg
         if diff >= 0 then
-            msg = string.format("beat |cffffffff%s|r by |cff4dcc4d%s|r", ref.label or "the ghost", KG.Math.FormatClock(diff))
+            msg = string.format("beat |cffffffff%s|r by |cff%s%s|r", ref.label or "the ghost",
+                KG.Style.GoodHex(), KG.Math.FormatClock(diff))
         else
-            msg = string.format("finished |cffe65959%s|r behind |cffffffff%s|r", KG.Math.FormatClock(-diff), ref.label or "the ghost")
+            msg = string.format("finished |cff%s%s|r behind |cffffffff%s|r",
+                KG.Style.BadHex(), KG.Math.FormatClock(-diff), ref.label or "the ghost")
         end
         print("|cff88ccffKeystoneGhost|r: " .. msg .. ".")
     end

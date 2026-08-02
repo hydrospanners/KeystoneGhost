@@ -36,6 +36,33 @@ function M.Frac(count, total)
     return (count or 0) / total * 100
 end
 
+-- ── Bracket search (the CPU pass, 2026-07-28) ────────────────────────────────
+-- The display loop samples/inverts timelines dozens of times per frame, and the
+-- scans below used to walk every node from index 1 — ~0.05 ms per call on a
+-- 4000-node replay. ScanStart binary-searches to a SAFE START and the original
+-- first-match linear scan finishes from there: same answers, a few-node walk.
+--
+-- "Safe" is where the care lives: timelines are ALMOST sorted, never assumed
+-- sorted (the wire-format rule — official-timer re-anchors step t back ~1.5 s,
+-- CleanRun accepts ≤5 s; forces flicker-dip ≤ ~1.5% of total). So the search
+-- hunts for target MINUS a slack covering the biggest honest wobble: under the
+-- band model (values = a monotone truth ± half the slack) nothing before the
+-- returned index can be a first match, and the linear finish preserves the
+-- exact first-bracket / first-crossing semantics the callers rely on (doubled
+-- step nodes, flat spans). Data wobblier than the slack allows (a compounding
+-- dip slide — nothing writes one today) degrades to a nearby bracket, never an
+-- error. `col` picks the searched column: 1 = time, 2 = count.
+local function ScanStart(snapshots, n, col, target)
+    local lo, hi = 1, n
+    while lo < hi do
+        local mid = math.floor((lo + hi + 1) / 2)
+        if snapshots[mid][col] < target then lo = mid else hi = mid - 1 end
+    end
+    return lo -- last index below target (1 when none is)
+end
+
+local TIME_SLACK = 6 -- > the ≤5 s backstep CleanRun accepts (live re-anchors: ~1.5 s)
+
 --- Sample a timeline at `elapsed` → count in the run's units (interpolated),
 --- bosses (step function).
 function M.SampleAt(snapshots, elapsed)
@@ -43,7 +70,7 @@ function M.SampleAt(snapshots, elapsed)
     if n == 0 then return 0, 0 end
     if elapsed <= snapshots[1][1] then return snapshots[1][2], snapshots[1][3] or 0 end
     if elapsed >= snapshots[n][1] then return snapshots[n][2], snapshots[n][3] or 0 end
-    for i = 1, n - 1 do
+    for i = ScanStart(snapshots, n, 1, elapsed - TIME_SLACK), n - 1 do
         local a, b = snapshots[i], snapshots[i + 1]
         if elapsed >= a[1] and elapsed <= b[1] then
             local span = b[1] - a[1]
@@ -77,10 +104,14 @@ end
 
 --- Earliest time the ghost reached `count` forces (linear interpolation between
 --- snapshots; count in the SNAPSHOTS' own units — callers map cross-total first).
-local function TimeForCount(snapshots, count)
+--- `dipSlack` = the caller's bound on honest count flicker-dips, for ScanStart's
+--- safety margin (0 is legal and just means "trust the column fully sorted").
+local function TimeForCount(snapshots, count, dipSlack)
     local n = #snapshots
     if n == 0 or count <= (snapshots[1][2] or 0) then return snapshots[1] and snapshots[1][1] or 0 end
-    for i = 2, n do
+    local start = ScanStart(snapshots, n, 2, count - (dipSlack or 0))
+    if start < 2 then start = 2 end
+    for i = start, n do
         if snapshots[i][2] >= count then
             local a, b = snapshots[i - 1], snapshots[i]
             local rise = b[2] - a[2]
@@ -121,7 +152,9 @@ function M.GhostTimeFor(run, count, bosses, total)
     if rt ~= lt and lt > 0 then
         target = target / lt * rt -- cross-total: compare in fraction space
     end
-    local tp = TimeForCount(snaps, target)
+    -- Dip slack for the bracket search: 2% of the run's total strictly covers
+    -- both the recorder's ~1% live guard and CleanRun's 1.5% accepted flicker.
+    local tp = TimeForCount(snaps, target, math.max(2, rt * 0.02))
     local tb = TimeForBosses(run, bosses)
     return (tb > tp) and tb or tp
 end
