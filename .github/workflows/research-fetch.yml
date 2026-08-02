@@ -8,6 +8,13 @@ name: Research fetch (temporary)
 # Delete this file when the analysis is done.
 
 on:
+  # push-triggered because branch-only workflows are not dispatchable via the
+  # API; the paths filter keeps ordinary analysis commits from re-running it.
+  push:
+    branches:
+      - 'claude/wow-addon-analysis-*'
+    paths:
+      - '.github/workflows/research-fetch.yml'
   workflow_dispatch:
 
 permissions:
