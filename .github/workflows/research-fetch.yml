@@ -1,15 +1,9 @@
 name: Research fetch (temporary)
 
-# TEMPORARY — lives only on the claude/wow-addon-analysis-* working branch.
-# Fetches a public CurseForge addon (for interoperability research) from CI,
-# because the remote Claude Code sandbox has no route to curseforge.com.
-# It does NOT commit anything: the addon zip is emitted base64-armored into
-# the job log (and as a build artifact) and decoded outside the repo.
-# Delete this file when the analysis is done.
+# TEMPORARY — cleanup stage. The fetch is done; this run only deletes the
+# transient handoff ref. The file itself is removed in the next commit.
 
 on:
-  # push-triggered because branch-only workflows are not dispatchable via the
-  # API; the paths filter keeps ordinary analysis commits from re-running it.
   push:
     branches:
       - 'claude/wow-addon-analysis-*'
@@ -18,123 +12,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  # write: the fetched bundle is handed back as a commit on a temporary
-  # refs/research/* ref (not a branch), deleted after pickup.
   contents: write
 
 jobs:
-  fetch:
+  cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch addon metadata and zip
-        shell: bash
-        run: |
-          set -uo pipefail
-          SLUG="paka-key-intime-mythic-forecast"
-          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-          mkdir -p out
-          note() { echo "[fetch] $*"; }
-
-          PROJECT_ID=""; FILE_ID=""; FILE_NAME=""
-
-          note "--- source 1: curseforge website search API ---"
-          for q in "paka%20key%20intime" "key%20intime" "paka"; do
-            code=$(curl -sS -m 30 -A "$UA" -H "Accept: application/json" \
-              -o out/search-"$q".json -w '%{http_code}' \
-              "https://www.curseforge.com/api/v1/mods/search?gameId=1&index=0&pageSize=50&filterText=$q" || echo ERR)
-            note "search '$q' -> HTTP $code"
-            if [ "$code" = "200" ]; then
-              hit=$(jq -r --arg s "$SLUG" '.data[]? | select(.slug==$s) | .id' out/search-"$q".json | head -1)
-              if [ -n "$hit" ]; then PROJECT_ID="$hit"; note "project id from search: $PROJECT_ID"; break; fi
-            fi
-          done
-
-          note "--- source 2: cfwidget (retries while it queues new projects) ---"
-          for i in $(seq 1 10); do
-            code=$(curl -sS -m 30 -A "$UA" -o out/cfwidget.json -w '%{http_code}' \
-              "https://api.cfwidget.com/wow/addons/$SLUG" || echo ERR)
-            note "cfwidget try $i -> HTTP $code"
-            [ "$code" = "200" ] && break
-            [ "$code" = "404" ] && break
-            sleep 15
-          done
-          if jq -e '.id' out/cfwidget.json >/dev/null 2>&1; then
-            [ -z "$PROJECT_ID" ] && PROJECT_ID=$(jq -r '.id' out/cfwidget.json)
-            FILE_ID=$(jq -r '[.files[]? ] | sort_by(.uploaded_at) | last | .id // empty' out/cfwidget.json)
-            FILE_NAME=$(jq -r '[.files[]? ] | sort_by(.uploaded_at) | last | .name // empty' out/cfwidget.json)
-            note "cfwidget: project=$PROJECT_ID latest file=$FILE_ID name=$FILE_NAME"
-          fi
-
-          if [ -z "$PROJECT_ID" ]; then
-            note "--- source 3: scrape project page for id ---"
-            curl -sS -m 30 -A "$UA" -o out/page.html "https://www.curseforge.com/wow/addons/$SLUG" || true
-            PROJECT_ID=$(grep -oE '"(id|projectId)":[0-9]{5,8}' out/page.html | grep -oE '[0-9]+' | head -1 || true)
-            note "page scrape -> project id: '${PROJECT_ID:-none}' (page bytes: $(wc -c < out/page.html 2>/dev/null || echo 0))"
-          fi
-
-          if [ -n "$PROJECT_ID" ] && [ -z "$FILE_ID" ]; then
-            note "--- files API for project $PROJECT_ID ---"
-            code=$(curl -sS -m 30 -A "$UA" -H "Accept: application/json" -o out/files.json -w '%{http_code}' \
-              "https://www.curseforge.com/api/v1/mods/$PROJECT_ID/files?pageIndex=0&pageSize=50" || echo ERR)
-            note "files API -> HTTP $code"
-            if [ "$code" = "200" ]; then
-              FILE_ID=$(jq -r '[.data[]?] | sort_by(.dateCreated) | last | .id // empty' out/files.json)
-              FILE_NAME=$(jq -r '[.data[]?] | sort_by(.dateCreated) | last | .fileName // empty' out/files.json)
-              note "files API: latest file=$FILE_ID name=$FILE_NAME"
-            fi
-          fi
-
-          if [ -z "$FILE_ID" ] || [ -z "$FILE_NAME" ]; then
-            note "FATAL: could not resolve a file id/name. Dumping what we have:"
-            for f in out/search-*.json out/cfwidget.json out/files.json; do
-              [ -s "$f" ] && { echo "===== $f ====="; head -c 4000 "$f"; echo; }
-            done
-            exit 1
-          fi
-
-          note "--- download: forgecdn (fileId split: NNNN/NNN, leading zeros stripped) ---"
-          P1=$((FILE_ID / 1000)); P2=$((FILE_ID % 1000))
-          ENC=$(jq -rn --arg n "$FILE_NAME" '$n|@uri')
-          ok=""
-          for host in mediafilez.forgecdn.net edge.forgecdn.net; do
-            url="https://$host/files/$P1/$P2/$ENC"
-            code=$(curl -sSL -m 120 -A "$UA" -o out/addon.zip -w '%{http_code}' "$url" || echo ERR)
-            note "$url -> HTTP $code ($(wc -c < out/addon.zip 2>/dev/null || echo 0) bytes)"
-            if [ "$code" = "200" ] && unzip -tq out/addon.zip >/dev/null 2>&1; then ok=1; break; fi
-          done
-          if [ -z "$ok" ]; then
-            url="https://www.curseforge.com/api/v1/mods/$PROJECT_ID/files/$FILE_ID/download"
-            code=$(curl -sSL -m 120 -A "$UA" -o out/addon.zip -w '%{http_code}' "$url" || echo ERR)
-            note "$url -> HTTP $code ($(wc -c < out/addon.zip 2>/dev/null || echo 0) bytes)"
-            unzip -tq out/addon.zip >/dev/null 2>&1 && ok=1
-          fi
-          [ -z "$ok" ] && { note "FATAL: no valid zip obtained"; exit 1; }
-
-          note "--- emit ---"
-          sha256sum out/addon.zip
-          unzip -l out/addon.zip
-
-      - name: Hand bundle back on a temporary ref
+      - name: Delete transient handoff ref
         shell: bash
         run: |
           set -euo pipefail
-          tar czf bundle.tgz out
-          mkdir handoff && cd handoff
-          git init -q
-          git config user.name "research-fetch"
-          git config user.email "actions@github.com"
-          cp ../bundle.tgz .
-          git add bundle.tgz
-          git commit -qm "research fetch bundle (transient)"
-          git push -q "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/research/paka-fetch -f
-          echo "[fetch] bundle pushed to refs/research/paka-fetch"
+          git init -q scratch && cd scratch
+          git push -q "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" :refs/research/paka-fetch || echo "[cleanup] ref already gone"
+          echo "[cleanup] done"
         env:
           GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Upload artifact (backup channel)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: research-fetch-out
-          path: out/
-          retention-days: 3
