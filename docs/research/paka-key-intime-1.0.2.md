@@ -226,6 +226,35 @@ honest heuristics, transparently labeled ("Profile/Live/Runs(n)" source line in 
    zero-risk social feature; an optional "/kg call" that whispers the current verdict
    to the group would rhyme with our export/import culture.
 
+## Launch reception (r/wowaddons, day 1)
+
+Thread `1vd71cf`, posted by u/Paka283 2026-08-02 03:26 UTC; snapshot taken ~09:40 UTC
+the same day (early — the thread may grow). Observed arc:
+
+- The subreddit's AutoModerator posts a standing policy: addons are audited with
+  Ketho's WoW API extension; "poorly optimized code or AI-generated spaghetti code
+  that pollutes the global namespace will be removed."
+- One commenter dismissed it on sight — "AI generated icon - check / AI UI - check /
+  AI code - check / 100% AI slop" — keying off the *icon*, the *dashboard styling*,
+  and the code, not the post's prose (the post itself is a decent first-person story:
+  "aging raider… my first WoW addon… would appreciate testers").
+- A genuinely willing tester (u/jeanONstream, "my friends and me gonna test it") then
+  filed, within ~25 minutes: no window resizing, no background transparency, wants a
+  minimap button instead of the floating launcher, "window kept popping up in the
+  city", "dungeon timer keeps running if you don't finish a key, window can't be
+  closed" — and concluded "I removed it after 10 minutes because of too many bugs."
+  A separate "Is it safe to use?" went unanswered for hours (author asleep, CET).
+
+Both failure modes were visible in the code dissected above: the 1 s `RefreshLive`
+tick re-`Show()`s the frame whenever `autoShow` is set (hence "can't close it"), and
+the live-key OR-ladder's sticky `eventStarted`/mapID fallbacks keep the run "active"
+after an abandoned key. The takeaway ordering: the slop *accusation* came from visual
+assets and framing (AI icon, neon dashboard, a "machine-learning" title claim that the
+post's own text contradicts — it's a running average); the *death* came from a friendly
+tester confirming carelessness with real bugs in the first ten minutes. Pattern-match
+starts the fire; unhandled lifecycle edges (login in city, abandon key, close window)
+are the fuel.
+
 ## Competitive read
 
 Different niches with one overlapping headline question. They: prior+rate *forecast*,
