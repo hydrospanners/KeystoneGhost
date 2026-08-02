@@ -30,3 +30,4 @@ ignore:
   - CHANGELOG.md
   - logo.png
   - logo-icon.png
+  - CLAUDE.md
