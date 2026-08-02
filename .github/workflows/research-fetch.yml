@@ -18,7 +18,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # write: the fetched bundle is handed back as a commit on a temporary
+  # refs/research/* ref (not a branch), deleted after pickup.
+  contents: write
 
 jobs:
   fetch:
@@ -111,13 +113,23 @@ jobs:
           note "--- emit ---"
           sha256sum out/addon.zip
           unzip -l out/addon.zip
-          echo "=====PROJECT_META_BEGIN====="
-          [ -s out/cfwidget.json ] && cat out/cfwidget.json || cat out/files.json
-          echo
-          echo "=====PROJECT_META_END====="
-          echo "=====ADDON_ZIP_B64_BEGIN====="
-          base64 out/addon.zip
-          echo "=====ADDON_ZIP_B64_END====="
+
+      - name: Hand bundle back on a temporary ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar czf bundle.tgz out
+          mkdir handoff && cd handoff
+          git init -q
+          git config user.name "research-fetch"
+          git config user.email "actions@github.com"
+          cp ../bundle.tgz .
+          git add bundle.tgz
+          git commit -qm "research fetch bundle (transient)"
+          git push -q "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/research/paka-fetch -f
+          echo "[fetch] bundle pushed to refs/research/paka-fetch"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Upload artifact (backup channel)
         if: always()
