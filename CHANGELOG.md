@@ -2,6 +2,70 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.12.0] - 2026-07-30
+
+- All the heavy Raider.IO work now happens while you walk in and during the key
+  countdown, never while the timer runs. The addon asks RaiderIO for its replay a
+  few times before the gates drop; if it hasn't answered by then, it stops asking
+  for the rest of that run and races your season best instead (the replay banks
+  again on your next key). Before, a replay the addon couldn't accept made it
+  retry every half-second through the whole opening minute: a stutter in the
+  first pulls, and another addon's internals poked around 120 times a key.
+- Two niceties left with that, on purpose: flipping RaiderIO's replay dropdown
+  mid-run no longer swaps the ghost, and the fallback live mirror no longer
+  upgrades to the full replay mid-run. Both return on your next key.
+- New option, "Raid marker as a hat": your runner stays your portrait, and a raid
+  target marker on you perches as a tiny hat above your head instead of replacing
+  your face.
+- After installing, the bar introduces itself at login. It appears running the
+  demo with a "drag me into place" handle above it, and keeps returning at login,
+  on any character, until the bar has been placed. Dragging the handle, dragging
+  the bar in Edit Mode, or closing the handle all count as placing, and one
+  placement covers all your characters. The show stands down during combat and
+  returns when the fight ends, and a reconnect into a running key resumes the real
+  race, never the demo. Fixes the fresh-install catch-22 where Edit Mode didn't
+  pick the bar up until it had been shown once, and nothing showed it before your
+  first key.
+- Settings sweep: "Walking bounce" and the pace car toggles moved from Edit Mode
+  to the options panel. The rule they follow now: Edit Mode carries size and
+  position, and how the race displays lives in the options panel. The Ghost
+  Roster's own controls stay in Edit Mode together. Your saved choices carry over.
+- Every pace car has its own checkbox now, "Show pace cars": +1, +2, +3 in the
+  options panel. The +1 sweeper can be hidden too; its red wake goes with it, and
+  the gap zone still warns about depletion.
+- The Edit Mode toggle "Boss lap splits" is now "Display Ghost Roster". It always
+  governed the whole roster panel, not just the lap columns.
+- "Reset Share Tag" now shows your current tag and asks for confirmation first. A
+  reset permanently splits how receivers group your earlier and later shares.
+- The race math takes a shortcut: timeline sampling narrows straight in on the
+  right recorded step instead of walking every step from the start. Same answers,
+  verified against the old math on 160,000 checks, at a fraction of the work.
+- Wearing a raid target marker repaints your icon twice a second instead of ten
+  times.
+- The roster tells you what key level each ghost ran. It only ever showed +1 or
+  +2, which is the chest result, not the key. So a 23 minute ghost could have
+  been a +2 or a +20, and you had no way to tell whether it was worth chasing.
+- Every roster column is its own thing now: who the ghost is, key level, chest,
+  route, time, now, and the boss splits. Each one has a tickbox in Edit Mode, so
+  you can drop the ones you never read. Route starts switched off. It is the wide
+  one. The chest column is headed by the Mythic+ chest icon, and a depleted run
+  reads as a red dash there.
+- Ghosts stop disappearing from the roster mid-key. Switch away from the
+  Raider.IO ghost and its row stays where it was, so you can click it and go
+  back. Before, the row left with the highlight and there was nothing to click.
+- The Ghost Library opens on the dungeon you are standing in.
+- Undocked, the bar grows to match the roster when you switch extra columns on.
+  Docked under the EllesmereUI timer it keeps the timer's width, and the roster
+  shows the columns that fit.
+- The Color vision setting reaches three places that were ignoring it: the +1
+  car and the trail behind it, the pull line, and the chat line after a key.
+- The numbers next to the bar stopped dodging your icon. The taller bar in 0.11.0
+  gave the icon its own lane, so the dodge was firing with nothing to dodge.
+- Each dungeon in the Ghost Library shows its key timer next to the name, so a
+  time in the list tells you straight away whether it was inside it.
+- The Ghost Library can be made taller: drag the grabber in the bottom-right
+  corner. The height sticks between sessions.
+
 ## [0.11.0] - 2026-07-26
 
 - A dungeon with no MDT route raced against the wrong one. MDT gives every
