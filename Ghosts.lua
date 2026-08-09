@@ -1080,6 +1080,17 @@ function G:FindRunOwner(run)
     return nil
 end
 
+--- The Ghost Library's name for a run's owner: the recording character's first
+--- name (the End Screen board rule, Fredrik 2026-08-08 — his own ghost says
+--- "Boonkd", never a second "you"). Nil for runs with no named owner to show:
+--- non-stored runs (live RaiderIO mirror) and the RIO pseudo-character —
+--- callers keep their roster tag then.
+function G:OwnerShortName(run)
+    local charKey = self:FindRunOwner(run)
+    if not charKey or charKey == KG.RIO_CHAR then return nil end
+    return ShortName(charKey)
+end
+
 --- Cached roster (the bar draws roster runners every frame; the underlying list only
 --- changes on save/import/pick — NOT on a switch, which is the point of the stable
 --- order). Invalidated explicitly.

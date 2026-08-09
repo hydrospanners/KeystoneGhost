@@ -14,10 +14,14 @@ loader:SetScript("OnEvent", function(self, event, addonName)
         self:UnregisterEvent("ADDON_LOADED")
     elseif event == "PLAYER_LOGIN" then
         self:UnregisterEvent("PLAYER_LOGIN")
-        KG.Style.ApplyColorVision(KG.db.colorVision) -- verdict palette before first draw
+        -- Verdict palette before first draw, and the ONLY time it is read (his
+        -- 2026-08-02 lock). InitDB has already resolved it to a string — including the
+        -- one-time seed from the game's colorblindMode toggle — so this is a plain read.
+        KG.Style.ApplyColorVision(KG.db.colorVision)
         KG.Start()
         KG.EditMode:Setup()
         KG.Options:Setup()
+        KG.Options.NoticeSeededPalette() -- only speaks on a fresh colorblind-mode install
         KG.Library:Setup() -- the minimap button (the window itself builds lazily)
         KG.Comm:Setup() -- chat-share pipe: prefix, chat filters, link clicks
         -- First-login placement (Fredrik 2026-07-28): a fresh install's bar was

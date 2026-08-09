@@ -90,6 +90,23 @@ function Comm.ParseChunk(msg)
     return token, tonumber(i), tonumber(n), part
 end
 
+--- Resolve the Finish Photo share pref → SendChatMessage chatType (pure; group
+--- state handed in so tests/test_comm.lua can lie about it). "group" means the
+--- people you just ran with, so the instance-group channel wins when there is
+--- one — a group-finder key chats in /i, and PARTY sent there reaches nobody —
+--- then raid, then party. Anything that is not "group" is the guild door.
+--- Returns the chatType, or nil plus the reason (the honest no-send line's middle).
+function Comm.ResolveShareChannel(pref, inGuild, inInstanceGroup, inRaid, inParty)
+    if pref == "group" then
+        if inInstanceGroup then return "INSTANCE_CHAT" end
+        if inRaid then return "RAID" end
+        if inParty then return "PARTY" end
+        return nil, "you're not in a group"
+    end
+    if inGuild then return "GUILD" end
+    return nil, "you're not in a guild"
+end
+
 -- ── sender side ───────────────────────────────────────────────────────────────
 
 local slots, nonce = {}, nil
@@ -123,6 +140,25 @@ function Comm.InsertShareLink(charKey, mapID, level, tier, pretty)
         return true -- shift-click consumed either way
     end
     box:Insert(marker)
+    return true
+end
+
+--- The Finish Photo's share button (Fredrik 2026-08-06): speak the marker
+--- straight into the configured channel — no editbox in the loop, otherwise the
+--- same slots, filter rewrite, and transfer pipe as the shift-click door.
+--- Returns true when a marker went out (the player's own chat line is the feedback).
+function Comm.SendShare(charKey, mapID, level, tier, pretty)
+    if not (C_ChatInfo and C_ChatInfo.SendChatMessage) then return false end
+    local chatType, why = Comm.ResolveShareChannel(KG.db.photoShareChannel,
+        IsInGuild(), IsInGroup(LE_PARTY_CATEGORY_INSTANCE), IsInRaid(), IsInGroup())
+    if not chatType then
+        print("|cff88ccffKeystoneGhost|r: nothing sent — " .. why
+            .. ". The share channel lives in /kg options.")
+        return false
+    end
+    local marker = Comm.OfferText(charKey, mapID, level, tier, pretty)
+    if not marker then return false end
+    C_ChatInfo.SendChatMessage(marker, chatType)
     return true
 end
 

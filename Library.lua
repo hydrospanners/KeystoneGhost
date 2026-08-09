@@ -230,17 +230,8 @@ end
 --- One muted line under an empty dungeon's header — the honest empty state
 --- (season-roster listing, 2026-07-21): says HOW a ghost appears here instead
 --- of the dungeon silently missing from the list.
-local function AcquireHint(i)
-    local fs = frame.hintPool[i]
-    if fs then return fs end
-    fs = frame.content:CreateFontString(nil, "OVERLAY")
-    Style.SetFont(fs, 10)
-    fs:SetHeight(ROW_H) -- position set per refresh (single TOPLEFT anchor)
-    fs:SetJustifyV("MIDDLE")
-    fs:SetTextColor(0.45, 0.45, 0.48)
-    frame.hintPool[i] = fs
-    return fs
-end
+-- (The per-group hint pool that lived here retired 2026-08-02: there is one empty
+-- state now and it belongs to the window, so a pool of them had nothing to hold.)
 
 local function AcquireRow(i)
     local row = frame.rowPool[i]
@@ -520,13 +511,18 @@ local function BuildFrame()
     frame.content:SetWidth(WIDTH - PAD * 2 - 18)
     frame.content:SetHeight(1)
     scroll:SetScrollChild(frame.content)
-    frame.groupPool, frame.rowPool, frame.hintPool = {}, {}, {}
+    frame.groupPool, frame.rowPool = {}, {}
 
-    frame.empty = frame:CreateFontString(nil, "OVERLAY")
+    -- The empty state lives IN the list, after the last dungeon — it is the last
+    -- thing you read, not a watermark. Centering it on the window (the old anchor)
+    -- would drop it behind the season roster's own eight rows; anchoring it to the
+    -- scroll frame's top would land it on the first one. Position is set per refresh,
+    -- where the running y is known.
+    frame.empty = frame.content:CreateFontString(nil, "OVERLAY")
     Style.SetFont(frame.empty, 12)
-    frame.empty:SetPoint("CENTER", 0, 10)
+    frame.empty:SetWidth(WIDTH - PAD * 2 - 30)
+    frame.empty:SetJustifyH("LEFT")
     frame.empty:SetTextColor(0.55, 0.55, 0.55)
-    frame.empty:SetText("No ghosts stored yet — finish a Mythic+ run, or import one.")
     frame.empty:Hide()
 
     -- Bottom bar: the one Import door + the Share Tag disclosure.
@@ -640,11 +636,18 @@ function Library:Refresh()
     local groups = M.LibraryModel(KG.db.runs, KG.Ghosts:MyPicks(), function(mapID)
         return S:GetMapName(mapID)
     end, S:GetSeasonMapIDs())
-    local rioHint = type(_G.RaiderIO) == "table"
-        and "No ghosts yet — finish a run here, or walk in with Raider.IO to bank its replay."
-        or "No ghosts yet — finish a run here, or import one."
+    -- The empty state, shown once under the list when NOTHING is stored anywhere.
+    -- The headers already say "no ghosts yet" per dungeon, so this line spends its
+    -- words on what to DO about it instead of repeating the news.
+    local emptyText = type(_G.RaiderIO) == "table"
+        and "Nothing stored yet. Run a key, or walk into a dungeon with Raider.IO loaded and its replay lands here."
+        or "Nothing stored yet. Run a key, or import a ghost from a friend."
+    -- Tail for an EMPTY dungeon's header, only with Raider.IO loaded. "when you walk
+    -- in" rather than "on arrival" (his 2026-08-02 read: arrival where?) — the player
+    -- is told the action that fills the row, in the words they would use for it.
+    local rioTail = type(_G.RaiderIO) == "table" and ", Raider.IO adds one when you walk in" or ""
 
-    local usedG, usedR, usedH, y = 0, 0, 0, 0
+    local usedG, usedR, y = 0, 0, 0
     local groupY = {} -- [mapID] = pixel offset of that dungeon's header
     for _, g in ipairs(groups) do
         usedG = usedG + 1
@@ -661,26 +664,24 @@ function Library:Refresh()
         -- Unreadable par → the segment simply isn't there.
         local par = g.mapID and S:GetParTimeSec(g.mapID)
         local parSeg = par and (M.FormatClock(par) .. " · ") or ""
+        -- An empty dungeon says where its first ghost comes from (his ask 2026-08-02).
+        -- NOT "a Raider.IO ghost will always be available", which we cannot promise:
+        -- it needs their addon loaded AND a replay to exist for that dungeon. So the
+        -- tail only appears when Raider.IO is actually loaded, and it describes what
+        -- happens rather than guaranteeing a result.
         h.text:SetText(n == 0
-            and string.format("%s |cff6f6f78· %sno ghosts yet|r", g.name, parSeg)
+            and string.format("%s |cff6f6f78· %sno ghosts yet%s|r", g.name, parSeg, rioTail)
             or string.format("%s |cff6f6f78· %s%d ghost%s%s|r", g.name, parSeg, n,
                 n == 1 and "" or "s", nHidden > 0 and (", " .. nHidden .. " hidden") or ""))
         h.text:SetTextColor(Style.GetAccent())
         h:Show()
         y = y + GROUP_H
 
-        -- The hint is advice, and advice repeated once per dungeon is wallpaper
-        -- (Fredrik 2026-07-23: a friend's fresh install was 8 identical lines).
-        -- Only the FIRST empty group carries it; the rest say "no ghosts yet" in
-        -- the header and leave it at that.
-        if n == 0 and usedH == 0 then
-            usedH = usedH + 1
-            local hint = AcquireHint(usedH)
-            hint:SetPoint("TOPLEFT", frame.content, "TOPLEFT", 6, -y)
-            hint:SetText(rioHint)
-            hint:Show()
-            y = y + ROW_H
-        end
+        -- No per-group hint. It was one line under the FIRST empty dungeon (the
+        -- 2026-07-23 cure for a fresh install printing eight identical ones), and
+        -- his clean-install screenshot showed what that actually reads as: advice
+        -- about the window, hanging off Algeth'ar Academy as though it were about
+        -- Algeth'ar Academy. It belongs to the empty STATE, below, once.
 
         for _, r in ipairs(g.rows) do
             usedR = usedR + 1
@@ -769,7 +770,22 @@ function Library:Refresh()
     end
     for i = usedG + 1, #frame.groupPool do frame.groupPool[i]:Hide() end
     for i = usedR + 1, #frame.rowPool do frame.rowPool[i]:Hide() end
-    for i = usedH + 1, #frame.hintPool do frame.hintPool[i]:Hide() end
+
+    -- The empty state is for a BLANK WINDOW only — no dungeons listed at all, which
+    -- happens when the season roster is unreadable and nothing is stored. A library
+    -- that lists dungeons needs no line: every header already ends in "no ghosts
+    -- yet", and saying it again in a sentence is the news twice (his call
+    -- 2026-08-02, looking at a clean install: "I don't think we need that hint now
+    -- that we have the message"). The 2026-07-23 per-group hint died with it.
+    if usedG == 0 then
+        frame.empty:SetText(emptyText)
+        frame.empty:ClearAllPoints()
+        frame.empty:SetPoint("TOPLEFT", frame.content, "TOPLEFT", 6, -(y + 10))
+        frame.empty:Show()
+        y = y + 10 + ROW_H
+    else
+        frame.empty:Hide()
+    end
     frame.content:SetHeight(math.max(y, 1))
     -- Open it standing in a dungeon and it opens ON that dungeon (Fredrik
     -- 2026-07-29): eight groups deep, the one you are in is the one you want.
@@ -791,10 +807,6 @@ function Library:Refresh()
             frame.scroll:SetVerticalScroll(math.max(0, math.min(at, maxScroll)))
         end
     end
-    -- Per-group hints carry the empty story now; the centered line remains only
-    -- when even the season roster gave nothing to list (no groups at all).
-    frame.empty:SetShown(usedG == 0)
-
     local tag = KG.db.shareTag
     frame.footer:SetText(tag
         and ("Your Share Tag: " .. tag .. " — lets receivers group your alts' exports")

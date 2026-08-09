@@ -38,6 +38,15 @@ local WIDTH, BAR_H, TRACK_H, PAD = 360, 115, 16, 12
 local TRACK_Y, NUM_TOP_Y, NUM_SUB_Y = 57, 4, 20
 local frame
 
+-- Pull-indicator overflow (his screenshots 2026-08-09: a long route name walked
+-- out of the window). Measured per refresh — GetStringWidth vs the frame's inner
+-- width — and when the one-liner does not fit, the pull half drops to its own
+-- row and the bar GROWS that row. State + setter forward-declared: the Update
+-- hot path decides, the position code (defined later) applies.
+local PULL_LINE_H = 13
+local pullWrapped = false
+local SetPullWrap
+
 -- Out-of-bounds hatching, bundled rather than borrowed (32x32, tileable, 45°): the
 -- road behind the Sweeper wears it in the Sweeper's red. (A grey run-off wall wore it
 -- too for a day; that is gone, this is not.)
@@ -51,8 +60,7 @@ local SWEPT_WAKE = 0.13 -- the sweeper's red wake, as a fraction of the track (~
 -- Pull Indicator went on speaking red/green after the color-vision setting had
 -- swapped every other verdict on screen (2026-07-29 sweep). The grey is not a
 -- verdict and stays fixed.
-local function GreenHex() return "|cff" .. Style.GoodHex() end
-local function RedHex() return "|cff" .. Style.BadHex() end
+local GreenHex, RedHex = Style.GoodEscape, Style.BadEscape
 local GRAY_HEX = "|cff8c8c8c"
 
 -- ── Test mode: synthetic ghost + simulated player so the bar can be inspected anywhere ──
@@ -267,6 +275,18 @@ local function TestTag(run)
     return (run.importedFrom and run.importedFrom:match("^([^%-]+)")) or M.TierLabel(run.chests)
 end
 
+--- The demo raced ghost's title line (hoisted 2026-08-09: the demo Finish
+--- Photo needs the same words TestState speaks).
+local function TestRefLabel(raced)
+    if raced == test.run then
+        return test.label or "Test ghost (27:00)"
+    elseif raced == test.rival then
+        return "Rival ghost (" .. M.FormatClock(raced.durationSec or 0) .. ")"
+    end
+    local rr = KG.Ghosts:RefForRun(raced)
+    return rr and rr.label or "Test ghost"
+end
+
 local function TestState()
     if not test.run then BuildTestData() end
     local elapsed = (GetTime() - test.start) * TEST_SPEED
@@ -345,15 +365,7 @@ local function TestState()
         raced = winner
     end
 
-    local label
-    if raced == test.run then
-        label = test.label or "Test ghost (27:00)"
-    elseif raced == test.rival then
-        label = "Rival ghost (" .. M.FormatClock(raced.durationSec or 0) .. ")"
-    else
-        local rr = KG.Ghosts:RefForRun(raced)
-        label = rr and rr.label or "Test ghost"
-    end
+    local label = TestRefLabel(raced)
     local roster = {}
     for _, rn in ipairs(cast) do
         if rn then
@@ -373,10 +385,101 @@ local function TestState()
     }
 end
 
+--- The demo's own Finish Photo (his order 2026-08-09: "the end screen needs to
+--- be in the /kg test too") — a summary shaped exactly like the Recorder's,
+--- from the loop's own cast, so H8+H9 show without running a key. The sim
+--- player crosses when its 1.12x clock reaches the ghost's course end; the
+--- loops alternate a WIN (vs the RaiderIO ghost) and a LOSS (vs the faster
+--- Rival), so both photo verdicts get demoed. No share slot on purpose: the
+--- demo run is not a stored ghost, and the glyph's absence is the honest state.
+local function BuildTestSummary()
+    local raced = (test.scenario == "rio" and test.rioRef) and test.rioRef.run
+        or test.attached or test.run
+    local dur = test.run.durationSec or 1620
+    local finalTime = math.floor((dur - 25) / 1.12 + 0.5)
+    local chests = M.TierForDuration(finalTime, test.par) or 0
+    local ref = (test.scenario == "rio" and test.rioRef)
+        or { kind = "test", label = TestRefLabel(raced), run = raced, durationSec = raced.durationSec }
+    local pool = {}
+    local function Cand(rn, tag)
+        if rn and type(rn.durationSec) == "number" and rn.durationSec > 0 then
+            pool[#pool + 1] = { run = rn, tag = KG.Ghosts:OwnerShortName(rn) or tag }
+        end
+    end
+    if test.scenario == "rio" then
+        Cand(test.rioRef.run, "RIO")
+    else
+        for _, rn in ipairs({ test.run, test.rival, test.run3, test.run2 }) do
+            Cand(rn, rn == test.rival and "Rival" or TestTag(rn))
+        end
+    end
+    local liveKills = {}
+    for i, bk in ipairs(test.run.bossKills or {}) do
+        liveKills[i] = math.max(0, (bk - 25) / 1.12)
+    end
+    local laps, lapMatch = M.LapDeltasByID(liveKills, raced.bossKills or {},
+        test.run.bossIDs, raced.bossIDs)
+    local stats = {
+        deaths = 4, timeLost = 4 * 15, -- the sim's scripted stumbles, all landed by the wrap
+        raw = (test.run.total or 300) + 7, total = test.run.total or 300,
+    }
+    stats.bestIdx, stats.best, stats.worstIdx, stats.worst = M.LapExtremes(laps, lapMatch, 0)
+    stats.nextTier, stats.tierGap = M.NextTierGap(finalTime, test.par)
+    return {
+        label = ref.label,
+        diff = ref.durationSec and (ref.durationSec - finalTime) or nil,
+        finalTime = finalTime, chests = chests, at = GetTime(), ref = ref,
+        level = test.run.level, par = test.par,
+        rows = M.ClosestRuns(pool, finalTime, 2), stats = stats,
+    }
+end
+
+--- The 5-second photo hold at each demo wrap ("let it stay on the end screen
+--- for 5 seconds before you loop"). True while Refresh should route to
+--- ShowSummary(test.summary); the hold expiring — or the photo's × — seeds
+--- the next loop. Only /kg test holds: the intro show and the Edit Mode
+--- preview keep their instant wrap (a frozen photo under the MOVE ME handle
+--- would read as broken, and a drag wants the live bar).
+local function TestPhotoHold()
+    if not test.run then return false end
+    if test.summary then
+        if GetTime() < (test.photoUntil or 0) then return true end
+        test.summary = nil
+        SeedTestSwitch()
+        return false
+    end
+    if (GetTime() - test.start) * TEST_SPEED <= (test.run.durationSec or 1620) * 1.05 then
+        return false
+    end
+    test.summary = BuildTestSummary()
+    test.photoUntil = GetTime() + 5
+    return true
+end
+
+local function DismissTestPhoto()
+    if test.summary then
+        test.summary = nil
+        SeedTestSwitch()
+    end
+end
+
 --- Shared live state for the bar and the splits panel (nil when nothing to race).
 --- Edit Mode preview reuses the synthetic test race so the frame has something to show.
 function Bar.GetLiveState()
-    if KG.testMode or KG.editModePreview or KG.introMode then return TestState() end
+    if KG.testMode or KG.editModePreview or KG.introMode then
+        -- The demo photo hold fences the whole demo race (council 2026-08-09):
+        -- while the hold stands, TestState must not run — its own wrap check
+        -- would reseed the loop mid-hold (double seeds, the rio loop skipped,
+        -- two chat lines per wrap) and the roster panel would draw the NEXT
+        -- loop over the End Screen's slot. Nil here hides the roster for the
+        -- hold, which is the design contract anyway (the two windows replace
+        -- each other). Edit Mode preview outranks the hold: opening it
+        -- dismisses the photo and hands the preview the live demo bar.
+        if test.summary then
+            if KG.editModePreview then DismissTestPhoto() else return nil end
+        end
+        return TestState()
+    end
     local R = KG.Recorder
     if not R:IsActive() or not R.currentRef then return nil end
     local elapsed = R:GetElapsed()
@@ -610,15 +713,204 @@ local function Build()
     frame.pullText = frame:CreateFontString(nil, "OVERLAY")
     frame.pullText:SetPoint("BOTTOM", 0, 6)
     Style.SetFont(frame.pullText, 10)
+    -- The overflow row (2026-08-09): when the route line is too wide, the
+    -- "Pull #n vs Ghost #n" half moves down here and the frame adds the row.
+    frame.pullText2 = frame:CreateFontString(nil, "OVERLAY")
+    frame.pullText2:SetPoint("BOTTOM", 0, 6)
+    Style.SetFont(frame.pullText2, 10)
+    frame.pullText2:Hide()
 
     -- Close button for the post-run summary (hidden during a run) — the same ×
     -- the Ghost Library wears, not the default red X (Fredrik 2026-07-21).
     frame.closeBtn = Style.CloseButton(frame, function()
-        KG.Recorder.summary = nil
+        if test.summary then
+            -- The demo photo's ×: skip to the next loop ONLY. A real run's
+            -- pending summary survives underneath (council 2026-08-09: this
+            -- handler used to nil it unconditionally, and the demo hold was
+            -- the first time test mode ever showed the button).
+            DismissTestPhoto()
+        else
+            KG.Recorder.summary = nil
+        end
         Bar:Refresh()
     end)
     frame.closeBtn:SetPoint("TOPRIGHT", -1, -1)
     frame.closeBtn:Hide()
+
+    -- The Finish Stats + celebration (his order 2026-08-09, "mario-esque"):
+    -- while a photo is up the TRACK hides whole — cursors, gap zone, skulls
+    -- and the ghost badge ride with it — and this board stands in the road's
+    -- band: stat lines on the left, a checkered finish flag with a hopping
+    -- portrait on the right. One container, so the photo path shows and
+    -- hides it in one move. The flag is DRAWN from WHITE8x8 squares — no
+    -- atlas to trust, nothing new to bundle, it cannot not-render (the
+    -- eye-icon lesson).
+    frame.photoBoard = CreateFrame("Frame", nil, frame)
+    frame.photoBoard:SetPoint("TOPLEFT", 0, -38)
+    frame.photoBoard:SetPoint("BOTTOMRIGHT")
+    frame.statLines = {}
+    for i = 1, 4 do
+        local fs = frame.photoBoard:CreateFontString(nil, "OVERLAY")
+        fs:SetPoint("TOPLEFT", PAD, -4 - (i - 1) * 17)
+        fs:SetJustifyH("LEFT")
+        fs:SetWordWrap(false)
+        Style.SetFont(fs, 10)
+        fs:SetTextColor(Style.TEXT[1], Style.TEXT[2], Style.TEXT[3])
+        frame.statLines[i] = fs
+    end
+    -- The flag, planted where the road's finish line stood. His question
+    -- 2026-08-09: "isn't there an existing finish flag?" — there is: the
+    -- skyriding races' checkered flag, atlas `worldquest-icon-race`, and
+    -- Blizzard's own LIVE quest log draws it (QuestUtils.lua, the map's race
+    -- icon), which is render-proof by their code, not grep-faith by ours.
+    -- Still behind the runtime check (the eye-icon rule): resolves → the
+    -- game's flag; a future patch renames it → the drawn pole-and-checker
+    -- stands again. Either way a flag renders.
+    local flag = CreateFrame("Frame", nil, frame.photoBoard)
+    flag:SetSize(30, 48)
+    flag:SetPoint("BOTTOMRIGHT", -PAD - 4, 6)
+    if C_Texture and C_Texture.GetAtlasInfo
+        and select(1, pcall(C_Texture.GetAtlasInfo, "worldquest-icon-race"))
+        and C_Texture.GetAtlasInfo("worldquest-icon-race") then
+        local cloth = flag:CreateTexture(nil, "ARTWORK")
+        cloth:SetAtlas("worldquest-icon-race")
+        cloth:SetSize(30, 30)
+        cloth:SetPoint("TOP", 0, -2)
+    else
+        local pole = flag:CreateTexture(nil, "ARTWORK")
+        pole:SetTexture("Interface\\Buttons\\WHITE8x8")
+        pole:SetVertexColor(0.75, 0.75, 0.78, 1)
+        pole:SetSize(2, 46)
+        pole:SetPoint("BOTTOMLEFT", 0, 0)
+        for r = 0, 5 do
+            for c = 0, 7 do
+                local sq = flag:CreateTexture(nil, "OVERLAY")
+                sq:SetTexture("Interface\\Buttons\\WHITE8x8")
+                sq:SetSize(3, 3)
+                sq:SetPoint("TOPLEFT", 3 + c * 3, -1 - r * 3)
+                if (r + c) % 2 == 0 then
+                    sq:SetVertexColor(0.10, 0.10, 0.12, 1)
+                else
+                    sq:SetVertexColor(0.92, 0.92, 0.94, 1)
+                end
+            end
+        end
+    end
+    frame.flag = flag
+    -- Mario on the podium: a second portrait beside the flag. Timed key = the
+    -- victory hop (the walk-cycle recipe, taller and with a landing beat);
+    -- Depleted = the Dazed wobble instead, flagless — he showed up, the timer
+    -- won. Painted and started once per summary (gated on s.at in ShowSummary).
+    frame.cheer = frame.photoBoard:CreateTexture(nil, "OVERLAY")
+    frame.cheer:SetSize(20, 20)
+    frame.cheer:SetPoint("BOTTOMRIGHT", flag, "BOTTOMLEFT", -10, 0)
+    local jump = frame.cheer:CreateAnimationGroup()
+    jump:SetLooping("REPEAT")
+    local up = jump:CreateAnimation("Translation")
+    up:SetOffset(0, 7); up:SetDuration(0.22); up:SetOrder(1); up:SetSmoothing("OUT")
+    local down = jump:CreateAnimation("Translation")
+    down:SetOffset(0, -7); down:SetDuration(0.2); down:SetOrder(2); down:SetSmoothing("IN")
+    local rest = jump:CreateAnimation("Translation")
+    rest:SetOffset(0, 0); rest:SetDuration(0.35); rest:SetOrder(3)
+    frame.cheerJump = jump
+    local sulk = frame.cheer:CreateAnimationGroup()
+    sulk:SetLooping("REPEAT")
+    local s1 = sulk:CreateAnimation("Rotation")
+    s1:SetDegrees(6); s1:SetDuration(0.12); s1:SetOrder(1); s1:SetSmoothing("IN_OUT")
+    local s2 = sulk:CreateAnimation("Rotation")
+    s2:SetDegrees(-12); s2:SetDuration(0.24); s2:SetOrder(2); s2:SetSmoothing("IN_OUT")
+    local s3 = sulk:CreateAnimation("Rotation")
+    s3:SetDegrees(6); s3:SetDuration(0.12); s3:SetOrder(3); s3:SetSmoothing("IN_OUT")
+    frame.cheerSulk = sulk
+    frame.photoBoard:Hide()
+
+    -- The End Screen (Fredrik 2026-08-07, growing his 2026-08-06 share shelf):
+    -- the panel hanging under the photo in the Roster Panel's slot — the
+    -- roster's live state is nil while a photo is up, so the two windows
+    -- replace each other. Content, top to bottom: the total-time header with
+    -- its margin against the timer, up to three frozen roster-style rows
+    -- (you + the two ghosts that finished closest to your clock — the
+    -- Recorder snapshots them into summary.rows), and the share row, which
+    -- names its channel on the face ("Guild"/"Group" next to the glyph).
+    -- Widgets built once here; ShowSummary paints and sizes per pass.
+    frame.endPanel = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    frame.endPanel:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0, -4)
+    frame.endPanel:SetPoint("TOPRIGHT", frame, "BOTTOMRIGHT", 0, -4)
+    frame.endPanel:SetHeight(32)
+    Style.SkinPanel(frame.endPanel)
+
+    frame.endHeader = frame.endPanel:CreateFontString(nil, "OVERLAY")
+    frame.endHeader:SetPoint("TOPLEFT", PAD, -7)
+    frame.endHeader:SetWordWrap(false)
+    Style.SetFont(frame.endHeader, 11)
+    frame.endHeader:SetTextColor(Style.TEXT[1], Style.TEXT[2], Style.TEXT[3])
+
+    -- The result rows: the Roster Panel's column grammar (icon · name · key ·
+    -- chest · time) plus a final "vs you" delta in the roster's sign language
+    -- (positive = you finished ahead). Fixed x-offsets — five columns fit any
+    -- width the bar itself can reach, so no spill logic down here.
+    local function EndCol(parent, x, w)
+        local fs = parent:CreateFontString(nil, "OVERLAY")
+        fs:SetPoint("LEFT", x, 0)
+        fs:SetWidth(w)
+        fs:SetJustifyH("LEFT")
+        fs:SetWordWrap(false)
+        Style.SetFont(fs, 10)
+        fs:SetTextColor(Style.TEXT[1], Style.TEXT[2], Style.TEXT[3])
+        return fs
+    end
+    frame.endRows = {}
+    for i = 1, 3 do
+        local row = CreateFrame("Frame", nil, frame.endPanel)
+        local y = -(24 + (i - 1) * 15)
+        row:SetPoint("TOPLEFT", PAD, y)
+        row:SetPoint("TOPRIGHT", -PAD, y)
+        row:SetHeight(15)
+        row.icon = row:CreateTexture(nil, "OVERLAY")
+        row.icon:SetSize(12, 12)
+        row.icon:SetPoint("LEFT", 1, 0)
+        row.name = EndCol(row, 18, 48)
+        row.level = EndCol(row, 66, 26)
+        row.chest = EndCol(row, 92, 30)
+        row.time = EndCol(row, 122, 40)
+        row.vs = EndCol(row, 162, 48)
+        frame.endRows[i] = row
+    end
+
+    -- The share glyph (Fredrik 2026-08-06; onto YOUR row 2026-08-08): the
+    -- Library's arrow-out-of-tray at the right edge of the board's "you" row —
+    -- the row it sits on IS the run it shares. No face label (his call: a
+    -- word doesn't fit a 15 px row line); the tooltip names the channel.
+    -- Shown only when the photo's run is shareable (summary.share) and the
+    -- option is on; the click speaks the chat-share marker into the configured
+    -- channel. The 2 s guard turns a double-click into one chat line, not two.
+    -- Anchored to the you-row per paint — the sort decides which row that is.
+    frame.shareBtn = CreateFrame("Button", nil, frame.endPanel)
+    frame.shareBtn:SetSize(16, 16)
+    frame.shareBtn.tex = frame.shareBtn:CreateTexture(nil, "ARTWORK")
+    frame.shareBtn.tex:SetSize(14, 14)
+    frame.shareBtn.tex:SetPoint("CENTER")
+    frame.shareBtn.tex:SetTexture("Interface\\AddOns\\KeystoneGhost\\share-icon.tga")
+    frame.shareBtn:SetAlpha(0.75)
+    frame.shareBtn:SetScript("OnEnter", function(self)
+        self:SetAlpha(1)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(self.tipText, 0.9, 0.9, 0.9)
+        GameTooltip:Show()
+    end)
+    frame.shareBtn:SetScript("OnLeave", function(self)
+        self:SetAlpha(0.75)
+        GameTooltip:Hide()
+    end)
+    frame.shareBtn:SetScript("OnClick", function(self)
+        local sh = KG.Recorder.summary and KG.Recorder.summary.share
+        if not sh or not KG.Comm then return end
+        if GetTime() - (self.lastSend or 0) < 2 then return end
+        if KG.Comm.SendShare(KG.CharacterKey(), sh.mapID, sh.level, sh.tier, sh.pretty) then
+            self.lastSend = GetTime()
+        end
+    end)
+    frame.endPanel:Hide()
 
 
     Bar.ApplyScale()
@@ -894,6 +1186,7 @@ function Bar:Update()
     local st = LiveState()
     if not st then frame:Hide(); return end
 
+    frame.track:Show() -- the photo (H9) hides the road; every live path re-opens it
     Style.RefreshPanel(frame)
     local ref = st.ref
     local W = frame.track:GetWidth() or WIDTH
@@ -1561,8 +1854,25 @@ function Bar:Update()
         frame.pullText:SetText(prefix .. you .. " vs " .. gho)
         frame.pullText:SetTextColor(Style.TEXT[1], Style.TEXT[2], Style.TEXT[3])
         frame.pullText:Show()
+        -- Overflow (his fix 2026-08-09): measured, not guessed. When the
+        -- rendered one-liner is wider than the frame's inner width, the pull
+        -- half gets its own row and SetPullWrap grows the bar by that row —
+        -- with the track pinned in place (the anchor math eats the shift).
+        -- Only a route prefix can overflow; the bare pull line always fits.
+        local wrap = prefix ~= ""
+            and frame.pullText:GetStringWidth() > ((frame:GetWidth() or WIDTH) - 2 * PAD)
+        if wrap then
+            frame.pullText:SetText((prefix:gsub(" · $", "")))
+            frame.pullText2:SetText(you .. " vs " .. gho)
+            frame.pullText2:SetTextColor(Style.TEXT[1], Style.TEXT[2], Style.TEXT[3])
+            frame.pullText2:Show()
+        else
+            frame.pullText2:Hide()
+        end
+        SetPullWrap(wrap)
     else
         frame.pullText:Hide()
+        SetPullWrap(false)
     end
 
     frame.ghostHover.tip = {
@@ -1637,14 +1947,27 @@ function Bar.IsDocked()
 end
 
 local function ApplyFreePosition()
-    frame:SetSize(FreeWidth(), BAR_H)
+    local extra = pullWrapped and PULL_LINE_H or 0
+    frame:SetSize(FreeWidth(), BAR_H + extra)
+    -- The wrap row must appear BELOW the bar: the track's screen position is
+    -- sacred mid-run. A TOP-ish saved anchor grows downward on its own; a
+    -- CENTER anchor would lift the track by half the row and BOTTOM by all of
+    -- it, so the offset eats exactly that shift. Applied at SetPoint time and
+    -- never written back to db.pos — Edit Mode drags happen in the preview,
+    -- whose demo route line is short, so a drag never saves while wrapped.
+    local function dy(point)
+        if extra == 0 or point:find("TOP") then return 0 end
+        if point:find("BOTTOM") then return -extra end
+        return -extra / 2
+    end
     local pos = KG.db.pos
     if pos and pos.point then
-        frame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
+        frame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point,
+            pos.x or 0, (pos.y or 0) + dy(pos.point))
     elseif pos and pos.x then -- legacy pre-EditMode format (center in screen coords)
-        frame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", pos.x, pos.y)
+        frame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", pos.x, pos.y + dy("CENTER"))
     else
-        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 260)
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 260 + dy("CENTER"))
     end
 end
 
@@ -1666,8 +1989,27 @@ local function UpdateAttachment()
     if target then
         frame:SetPoint("TOPLEFT", target, "BOTTOMLEFT", 0, -4)
         frame:SetPoint("TOPRIGHT", target, "BOTTOMRIGHT", 0, -4)
-        frame:SetHeight(BAR_H)
+        frame:SetHeight(BAR_H + (pullWrapped and PULL_LINE_H or 0))
     else
+        ApplyFreePosition()
+    end
+end
+
+--- Enter/leave the two-line pull mode (forward-declared with the state at the
+--- top of the file — the Update hot path calls this, the position code above
+--- does the applying). Docked, the TOP anchors make the growth downward for
+--- free; floating, ApplyFreePosition's anchor math pins the track.
+SetPullWrap = function(wrap)
+    wrap = wrap and true or false
+    if pullWrapped == wrap or not frame then return end
+    pullWrapped = wrap
+    frame.pullText:ClearAllPoints()
+    frame.pullText:SetPoint("BOTTOM", 0, wrap and (6 + PULL_LINE_H) or 6)
+    if not wrap then frame.pullText2:Hide() end
+    if frame._attachMode == "ellesmere" then
+        frame:SetHeight(BAR_H + (wrap and PULL_LINE_H or 0))
+    elseif frame._attachMode then -- free; nil = pre-first-attach, height lands there
+        frame:ClearAllPoints()
         ApplyFreePosition()
     end
 end
@@ -1707,6 +2049,7 @@ function Bar:ShowSummary(s)
     -- widest in the addon ("13:04 · +3") — so it asks for the corner to be left free.
     PlaceNumbers(true)
     frame.pullText:Hide()
+    SetPullWrap(false) -- the photo never wraps: the board needs the frame at BAR_H
     for i = 1, #frame.runners do frame.runners[i]:Hide() end
     if frame.deathMarks then
         for i = 1, #frame.deathMarks do frame.deathMarks[i]:Hide() end
@@ -1721,46 +2064,172 @@ function Bar:ShowSummary(s)
     if frame.ghostDazed:IsPlaying() then frame.ghostDazed:Stop() end -- both runners still for the photo
     frame._kb, frame._kbPot, frame._lastDeathCount, frame._lastTimeLost = nil, nil, nil, nil -- no knockback residue in the photo
 
-    -- The finish photo (full-road view, no camera).
-    local W = frame.track:GetWidth() or WIDTH
-    local ref = s.ref
-    if ref and ref.run then
-        frame.finishLine:ClearAllPoints()
-        frame.finishLine:SetPoint("LEFT", frame.track, "LEFT", W - 2, 0)
-        frame.finishLine:Show()
-        local nBosses = ref.nBosses or (ref.run.bossKills and #ref.run.bossKills) or 0
-        local gCourse = math.min(1, M.CourseAt(ref.run, s.finalTime or 0, nBosses))
-        local gx, ex = gCourse * W, W
-
-        frame.playerCursor:ClearAllPoints()
-        frame.playerCursor:SetPoint("LEFT", frame.track, "LEFT", ex - 2, 0)
-        frame.playerHover:ClearAllPoints()
-        frame.playerHover:SetPoint("BOTTOM", frame.track, "TOPLEFT", ex - 4, 1)
-        frame.ghostCursor:ClearAllPoints()
-        frame.ghostCursor:SetPoint("LEFT", frame.track, "LEFT", gx - 1, 0)
-        frame.ghostHover:ClearAllPoints()
-        frame.ghostHover:SetPoint("TOP", frame.track, "BOTTOMLEFT", gx, -1)
-        ApplyGhostIcon(frame.ghostIcon, ref)
-
-        local won = (s.diff or 0) >= 0
-        local c = won and Style.GREEN or Style.RED
-        frame.playerCursor:SetVertexColor(c[1], c[2], c[3], 1)
-        if ex - gx >= 2 then
-            local z = frame.gapZone
-            z._faint:SetRGBA(c[1], c[2], c[3], 0.1)
-            z._strong:SetRGBA(c[1], c[2], c[3], 0.55)
-            z:SetGradient("HORIZONTAL", z._faint, z._strong)
-            z:ClearAllPoints()
-            z:SetPoint("TOPLEFT", frame.track, "TOPLEFT", gx, 0)
-            z:SetWidth(ex - gx)
-            z:Show()
-        else
-            frame.gapZone:Hide()
-        end
-        frame.playerHover.tip = { "You — finished", M.FormatClock(s.finalTime or 0) .. " · " .. M.TierLabel(s.chests) }
-        frame.ghostHover.tip = { s.label or "Ghost",
-            won and ("Was here when you crossed the line") or ("Finished first — " .. M.FormatClock(ref.durationSec or 0)) }
+    -- H9 (his order 2026-08-09): the road stands down for the photo. The
+    -- track hides WHOLE — cursors, gap zone, skulls and the ghost badge are
+    -- its children and ride along (the badge's route-load click goes with it;
+    -- /kg route stays the post-run door) — and the Finish Stats band stands
+    -- where it ran: the numbers the race was actually about, next to the
+    -- checkered flag. (The full-road photo this replaces lived here from H5;
+    -- Update() re-shows the track for the next run.)
+    frame.track:Hide()
+    local st = s.stats or {}
+    local L = {}
+    -- deaths — a clean run wears the verdict green; a count stays neutral.
+    if (st.deaths or 0) == 0 then
+        L[#L + 1] = GRAY_HEX .. "deaths|r   " .. GreenHex() .. "none — deathless|r"
+    else
+        L[#L + 1] = GRAY_HEX .. "deaths|r   " .. st.deaths
+            .. ((st.timeLost and st.timeLost > 0)
+                and (GRAY_HEX .. "  ·  |r" .. M.FormatClock(st.timeLost) .. GRAY_HEX .. " lost|r") or "")
     end
+    -- forces — the finish reading plus the overkill, in the player's chosen
+    -- readout (the percentDisplay option every other site follows).
+    if st.raw and st.total and st.total > 0 then
+        local shown = KG.db.percentDisplay ~= false
+            and string.format("%.1f%%", st.raw / st.total * 100)
+            or (st.raw .. "/" .. st.total)
+        local over = st.raw - st.total
+        L[#L + 1] = GRAY_HEX .. "forces|r   " .. shown
+            .. (over > 0 and (GRAY_HEX .. "  ·  +" .. over .. " extra|r") or "")
+    end
+    -- boss laps vs the raced ghost — best and worst, speedrun-signed
+    -- (negative = you killed it faster), the roster lap columns' own colors.
+    -- The LABEL says "bosses" (his 2026-08-09 call: "laps" is racing jargon
+    -- with no meaning in the game's own language); "lap" stays the internal
+    -- term everywhere the player can't see.
+    if st.bestIdx then
+        local function Lap(i, d)
+            return "B" .. i .. " " .. (d <= 0 and GreenHex() or RedHex()) .. M.FormatDelta(d) .. "|r"
+        end
+        local txt = GRAY_HEX .. "bosses|r   " .. Lap(st.bestIdx, st.best)
+        if st.worstIdx and st.worstIdx ~= st.bestIdx then
+            txt = txt .. GRAY_HEX .. "  ·  |r" .. Lap(st.worstIdx, st.worst)
+        end
+        L[#L + 1] = txt .. GRAY_HEX .. "  vs the ghost|r"
+    end
+    -- the chest that got away — or, on a +3, the room to spare inside it.
+    if st.nextTier and st.tierGap and st.tierGap > 0 then
+        L[#L + 1] = GRAY_HEX .. "next chest|r   " .. M.TierLabel(st.nextTier)
+            .. GRAY_HEX .. " was |r" .. M.FormatClock(st.tierGap) .. GRAY_HEX .. " away|r"
+    elseif not st.nextTier and st.tierGap then
+        L[#L + 1] = GRAY_HEX .. "cushion|r   " .. M.FormatClock(st.tierGap)
+            .. GRAY_HEX .. " inside the +3 cutoff|r"
+    end
+    for i = 1, 4 do
+        frame.statLines[i]:SetText(L[i] or "")
+    end
+    -- The celebration paints once per summary (s.at gates it): repainting the
+    -- portrait and restarting an AnimationGroup every 0.1 s pass would stutter.
+    if frame.photoBoard._for ~= s.at then
+        frame.photoBoard._for = s.at
+        if not pcall(SetPortraitTexture, frame.cheer, "player") then
+            frame.cheer:SetTexture("Interface\\Icons\\Achievement_PVP_A_01")
+        end
+        frame.cheer:SetTexCoord(0, 1, 0, 1)
+        local timedRun = (s.chests or 0) >= 1
+        frame.flag:SetShown(timedRun)
+        if frame.cheerJump:IsPlaying() then frame.cheerJump:Stop() end
+        if frame.cheerSulk:IsPlaying() then frame.cheerSulk:Stop() end
+        if timedRun then frame.cheerJump:Play() else frame.cheerSulk:Play() end
+    end
+    frame.photoBoard:Show()
+
+    -- ── The End Screen (his sketch 2026-08-07) ────────────────────────────────
+    -- Painted per pass like the rest of the photo, so option flips (share
+    -- checkbox, channel, accent) land on an already-open board. Shows with
+    -- EVERY photo, Depleted included — only the share row stays stored-timed-
+    -- gated. Rows sort fastest first; your fresh run is the anchor row: your
+    -- portrait, "you", and an empty "vs" cell (the photo's headline already
+    -- carries your verdict). A ghost of your own is tagged "you" on the live
+    -- roster — here every ghost wears its RECORDING CHARACTER's name, the
+    -- Ghost Library way (his 2026-08-08 rule: his own old run says "Boonkd").
+    -- The Recorder resolves the names into summary.rows; the "ghost" arm
+    -- below is only the failsafe for an own-run tag that arrived unresolved —
+    -- better an anonymous ghost than a second "you".
+    Style.RefreshPanel(frame.endPanel)
+    local margin = s.par and s.par > 0 and (s.par - (s.finalTime or 0)) or nil
+    if margin then
+        local good = margin >= 0
+        frame.endHeader:SetText(M.FormatClock(s.finalTime or 0) .. "  ·  "
+            .. (good and GreenHex() or RedHex()) .. M.FormatClock(math.abs(margin))
+            .. (good and " under the timer|r" or " over the timer|r"))
+    else
+        frame.endHeader:SetText(M.FormatClock(s.finalTime or 0))
+    end
+
+    local accentHex = Style.AccentHex()
+    local list = {}
+    for _, e in ipairs(s.rows or {}) do
+        if e.run then
+            list[#list + 1] = { tag = e.tag, dur = e.run.durationSec or 0,
+                level = e.run.level, chests = e.run.chests, run = e.run }
+        end
+    end
+    list[#list + 1] = { you = true, dur = s.finalTime or 0, level = s.level, chests = s.chests }
+    table.sort(list, function(a, b) return a.dur < b.dur end)
+    -- Icon paints gate on s.at like the cheer portrait below (council
+    -- 2026-08-09: they ran ungated at 10 Hz on a static board, against this
+    -- file's own _kgIconKey standard). Texts stay per-pass — they are the
+    -- option-reactive part.
+    local repaintIcons = frame.endPanel._for ~= s.at
+    frame.endPanel._for = s.at
+    local youRow
+    for i = 1, 3 do
+        local row, e = frame.endRows[i], list[i]
+        if e then
+            if e.you then
+                youRow = row
+                if repaintIcons then
+                    if not pcall(SetPortraitTexture, row.icon, "player") then
+                        row.icon:SetTexture("Interface\\Icons\\Achievement_PVP_A_01")
+                    end
+                    row.icon:SetTexCoord(0, 1, 0, 1)
+                end
+            elseif repaintIcons then
+                ApplyRunnerIcon(row.icon, e.run)
+            end
+            local name = e.you and "you" or (e.tag == "you" and "ghost" or (e.tag or "?"))
+            row.name:SetText("|cff" .. accentHex .. M.Ellipsize(name, 8) .. "|r")
+            if e.level then
+                local off = s.level and e.level ~= s.level
+                row.level:SetText((off and GRAY_HEX or "") .. "+" .. e.level .. (off and "|r" or ""))
+            else
+                row.level:SetText(GRAY_HEX .. "—|r")
+            end
+            if e.chests then
+                row.chest:SetText(e.chests > 0 and M.TierLabel(e.chests) or (RedHex() .. "—|r"))
+            else
+                row.chest:SetText(GRAY_HEX .. "—|r")
+            end
+            row.time:SetText(M.FormatClock(e.dur))
+            -- "vs you" in the roster's sign language: positive = you finished
+            -- ahead of this ghost. Neutral grey — the verdict color budget
+            -- belongs to the header and the photo (the roster's own rule).
+            row.vs:SetText(e.you and "" or (GRAY_HEX .. M.FormatDelta(e.dur - (s.finalTime or 0)) .. "|r"))
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+    local n = math.min(#list, 3)
+
+    -- The share glyph, on YOUR row's right edge (his 2026-08-08 order — the
+    -- row it sits on is the run it shares, and the board ends at its last
+    -- row): only a stored, timed run carries one (summary.share), and the
+    -- checkbox can veto it. No face label; the tooltip names the channel.
+    local sh = s.share
+    if sh and youRow and KG.db.photoShare ~= false and KG.Comm then
+        frame.shareBtn.tex:SetVertexColor(Style.GetAccent())
+        frame.shareBtn:ClearAllPoints()
+        frame.shareBtn:SetPoint("RIGHT", youRow, "RIGHT", 0, 0)
+        frame.shareBtn.tipText = "Share — send this ghost to "
+            .. (KG.db.photoShareChannel == "group" and "your group" or "guild chat")
+        frame.shareBtn:Show()
+    else
+        frame.shareBtn:Hide()
+    end
+    frame.endPanel:SetHeight(24 + n * 15 + 5)
+    frame.endPanel:Show()
 
     frame.closeBtn:Show()
     frame:Show()
@@ -1850,9 +2319,19 @@ function Bar:Refresh()
     elseif frame.moveMe and frame.moveMe:IsShown() then
         frame.moveMe:Hide()
     end
-    if KG.testMode or KG.editModePreview or KG.introMode
+    if KG.testMode and not KG.editModePreview and TestPhotoHold() then
+        -- The demo's 5 s photo hold (his order 2026-08-09): the loop's own
+        -- End Screen, drawn by the one real ShowSummary — same photo, same
+        -- board, no share glyph (nothing stored to stream).
+        Bar:ShowSummary(test.summary)
+    elseif KG.testMode or KG.editModePreview or KG.introMode
         or (KG.Recorder:IsActive() and KG.Recorder.currentRef) then
         frame.closeBtn:Hide() -- the number block places itself (PlaceNumbers)
+        frame.endPanel:Hide() -- the End Screen is the photo's alone
+        frame.photoBoard:Hide() -- so are the Finish Stats and the flag…
+        if frame.cheerJump:IsPlaying() then frame.cheerJump:Stop() end
+        if frame.cheerSulk:IsPlaying() then frame.cheerSulk:Stop() end
+        frame.photoBoard._for = nil -- …and a re-shown photo repaints/replays
         Bar:Update()
     elseif KG.Recorder.summary then
         Bar:ShowSummary(KG.Recorder.summary)

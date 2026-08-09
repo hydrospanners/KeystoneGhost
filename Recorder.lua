@@ -695,7 +695,50 @@ function R:OnKeyEnd()
         chests = chests,
         at = GetTime(),
         ref = ref, -- Bar:ShowSummary draws the finish photo from this
+        level = level,
+        par = saved.parTimeSec, -- the End Screen's over/under-the-timer line
     }
+    -- The End Screen's neighbor rows (his sketch 2026-08-07): the two ghosts
+    -- that finished closest to your clock, either side, from the rows this key
+    -- actually drew (the sticky set + the raced ref). SNAPSHOTTED into the
+    -- summary because the sticky set dies at the next key start while the
+    -- photo can outlive it. A run without a positive clock never finished
+    -- anything and cannot stand on a result board.
+    local pool, inPool = {}, {}
+    local function Candidate(run, tag)
+        if run and not inPool[run] and type(run.durationSec) == "number" and run.durationSec > 0 then
+            inPool[run] = true
+            -- The board names a ghost by its RECORDING CHARACTER, as the Ghost
+            -- Library does (his 2026-08-08 rule: his own ghost reads "Boonkd",
+            -- never a second "you"). Resolved HERE, before the Ghosts:Save
+            -- below — beating your own same-tier best EVICTS the old run from
+            -- the store, and an evicted run has no owner left to look up. RIO
+            -- and unstored runs resolve nil and keep their roster tag.
+            pool[#pool + 1] = { run = run, tag = KG.Ghosts:OwnerShortName(run) or tag }
+        end
+    end
+    for _, e in ipairs(R:ShownRows()) do Candidate(e.run, e.tag) end
+    if ref and ref.run then Candidate(ref.run, KG.Math.RunTag(ref.run, ref.kind)) end
+    R.summary.rows = KG.Math.ClosestRuns(pool, durationSec, 2)
+
+    -- Finish Stats (H9, his order 2026-08-09): the facts the photo's stats
+    -- band states, gathered while they are warm. Laps only from a timeline
+    -- recorded whole this session — a resumed run's leading kills carry
+    -- seeded stamps and their laps lie (LapExtremes drops those; a partial
+    -- run skips the lap line entirely).
+    local stats = {
+        deaths = saved.deathCount or 0,
+        timeLost = saved.deathTimeLost,
+        raw = saved.lastRaw, total = saved.lastTotal,
+    }
+    if ref and ref.run and not saved.partial then
+        local laps, lapMatch = KG.Math.LapDeltasByID(saved.bossKills, ref.run.bossKills,
+            saved.bossIDs, ref.run.bossIDs)
+        stats.bestIdx, stats.best, stats.worstIdx, stats.worst =
+            KG.Math.LapExtremes(laps, lapMatch, saved.seededKills)
+    end
+    stats.nextTier, stats.tierGap = KG.Math.NextTierGap(durationSec, saved.parTimeSec)
+    R.summary.stats = stats
     if diff then
         -- The verdict pair comes from Style, never from a literal: these two lines
         -- had `4dcc4d`/`e65959` baked in — the DEFAULT green and red exactly — so
@@ -732,6 +775,20 @@ function R:OnKeyEnd()
         print(string.format("|cff88ccffKeystoneGhost|r: run saved as %s ghost (+%d, %s).",
             KG.Math.TierLabel(chests), level, KG.Math.FormatClock(durationSec)))
         R:StartPartySpecSweep()
+        -- The Finish Photo's share button (Fredrik 2026-08-06) hangs off this:
+        -- only a run that actually LANDED in the store is offered — ExportString
+        -- addresses (charKey, mapID, level, tier), so a slower repeat that
+        -- InsertRun rejected would stream the stored incumbent, not the run in
+        -- the photo. Depleted never shares (the pin is their only door), which
+        -- also keeps the photo's button meaning "timed and kept".
+        if chests >= 1 then
+            local name = S:GetMapName(saved.mapID) or ("map " .. saved.mapID)
+            R.summary.share = {
+                mapID = saved.mapID, level = level, tier = chests,
+                pretty = string.format("%s +%d (%s)", name, level,
+                    KG.Math.FormatClock(durationSec)),
+            }
+        end
     end
 end
 

@@ -531,6 +531,62 @@ end
 local TIER_LABEL = { [0] = "depleted", [1] = "+1", [2] = "+2", [3] = "+3" }
 function M.TierLabel(tier) return TIER_LABEL[tier or -1] or "?" end
 
+--- The short row tag for a run OUTSIDE the roster's own tag chain: the
+--- importer's first name → RIO → the pace-car kind → the tier label. One
+--- derivation for the Roster Panel's fallback raced row and the End Screen's
+--- raced-ref candidate (it lived inline in Splits.BuildDisplayRows first).
+function M.RunTag(run, kind)
+    return (run.importedFrom and (run.importedFrom:match("^([^%-]+)") or "import"))
+        or (run.legacy == "RIO" and "RIO")
+        or (kind == "season" and "season") or (kind == "par" and "par")
+        or M.TierLabel(run.chests)
+end
+
+--- Next-chest arithmetic for the Finish Stats (H9): where `durationSec` stands
+--- against the tier cutoffs (+3 = 60% par, +2 = 80%, +1 = par). Returns
+--- (nextTier, gapSec) — the first chest NOT reached and how far away it was —
+--- or (nil, insideSec) on a +3: the room left inside the top cutoff.
+function M.NextTierGap(durationSec, parTimeSec)
+    local tier = M.TierForDuration(durationSec, parTimeSec)
+    if not tier then return nil, nil end
+    if tier >= 3 then return nil, parTimeSec * 0.6 - durationSec end
+    local cutoff = { [0] = 1, [1] = 0.8, [2] = 0.6 }
+    return tier + 1, durationSec - parTimeSec * cutoff[tier]
+end
+
+--- Best and worst boss lap for the Finish Stats: the most-negative delta (you
+--- killed it faster — the roster's speedrun sign) and the most-positive, over
+--- the HONEST matched laps only: `lapMatch[i] <= seededKills` marks a lap
+--- whose live kill stamp was resume-seeded, and a seeded lap lies (the same
+--- rule the roster's lap columns follow). Returns bestIdx, bestDelta,
+--- worstIdx, worstDelta — all nil when no honest lap exists.
+function M.LapExtremes(laps, lapMatch, seededKills)
+    local bi, bd, wi, wd
+    for i, d in pairs(laps or {}) do
+        local seeded = lapMatch and lapMatch[i] and seededKills and lapMatch[i] <= seededKills
+        if not seeded then
+            if not bd or d < bd then bi, bd = i, d end
+            if not wd or d > wd then wi, wd = i, d end
+        end
+    end
+    return bi, bd, wi, wd
+end
+
+--- The End Screen's neighbor pick: the `n` pool entries whose run clocks stand
+--- closest to `dur`, either side — two faster ghosts beat one on each side if
+--- that is what the clocks say. Entries carry `.run.durationSec`; the pool is
+--- copied, never reordered under the caller.
+function M.ClosestRuns(pool, dur, n)
+    local sorted = {}
+    for i, e in ipairs(pool) do sorted[i] = e end
+    table.sort(sorted, function(a, b)
+        return math.abs(a.run.durationSec - dur) < math.abs(b.run.durationSec - dur)
+    end)
+    local out = {}
+    for i = 1, math.min(n or 2, #sorted) do out[i] = sorted[i] end
+    return out
+end
+
 --- Store `run` in the per-(char,map,level) tier table: one slot per chest tier (0..3),
 --- keeping the fastest run in each slot. Max 4 ghosts per level by construction.
 --- @return true when the run was stored (new slot or faster than the incumbent)

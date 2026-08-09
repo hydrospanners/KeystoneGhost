@@ -149,7 +149,7 @@ function Splits.LapSlotsFor(availW) return Layout(availW).lapSlots end
 --- Verdict-colored delta (palette-aware — color vision setting swaps the pair).
 local function ColorDelta(sec, goodWhenPositive)
     local good = goodWhenPositive and sec >= 0 or (not goodWhenPositive and sec <= 0)
-    return "|cff" .. (good and Style.GoodHex() or Style.BadHex()) .. M.FormatDelta(sec) .. "|r"
+    return (good and Style.GoodEscape() or Style.BadEscape()) .. M.FormatDelta(sec) .. "|r"
 end
 
 --- Neutral delta for NON-ACTIVE rows (Fredrik 2026-07-21: "too many colors
@@ -236,13 +236,11 @@ function Splits.BuildDisplayRows(st)
         end
     end
     if racedRun and not ref.live then -- a switch onto a ghost no list offered yet
-        Add({ run = racedRun,
-            tag = (racedRun.importedFrom and (racedRun.importedFrom:match("^([^%-]+)") or "import"))
-                or (racedRun.legacy == "RIO" and "RIO")
-                -- A pace car has no chests, and TierLabel called it "?" — which is
-                -- what a player with no ghosts and no Raider.IO saw on row 1.
-                or (ref.kind == "season" and "season") or (ref.kind == "par" and "par")
-                or M.TierLabel(racedRun.chests) })
+        -- Tag chain hoisted to M.RunTag (2026-08-07, the End Screen shares it).
+        -- A pace car has no chests, and TierLabel called it "?" — which is
+        -- what a player with no ghosts and no Raider.IO saw on row 1; hence
+        -- the kind steps before the tier fallback.
+        Add({ run = racedRun, tag = M.RunTag(racedRun, ref.kind) })
     end
     if lead then KG.Recorder:NoteShownRow(lead) end
     for _, e in ipairs(rows) do KG.Recorder:NoteShownRow(e) end
@@ -571,7 +569,7 @@ function Splits:Refresh()
         -- which is what a pace car shows). BadHex, so color-vision modes swap it.
         if run.chests then
             cell.chest:SetText(run.chests > 0 and M.TierLabel(run.chests)
-                or ("|cff" .. Style.BadHex() .. "—|r"))
+                or (Style.BadEscape() .. "—|r"))
         else
             cell.chest:SetText(GRAY .. "—|r")
         end

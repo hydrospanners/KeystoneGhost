@@ -19,8 +19,50 @@
 local ADDON_NAME, NS = ...
 local KG = NS.KG
 
+-- Reload prompt for the color-vision pick (Fredrik 2026-08-02). The palette is read
+-- once at load, so the dropdown changes nothing on screen — the one setting in the
+-- panel with no visible feedback, which is exactly the shape a player reads as
+-- "broken". A chat line was too easy to miss in a busy frame; this is Blizzard's own
+-- convention for a reload-required setting, and the Library's delete dialog already
+-- speaks it. Either way the pick is SAVED: "Later" means next login, not undone.
+StaticPopupDialogs["KEYSTONEGHOST_COLORVISION_RELOAD"] = {
+    text = "Keystone Ghost — color vision set to %s.|nThe race colors change on your next reload.",
+    button1 = "Reload now",
+    button2 = "Later",
+    OnAccept = function() ReloadUI() end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- Mid-key variant: same news, no reload button. Offering a one-click reload during a
+-- run would undo the point of locking the palette to load — and the recorder would
+-- have to resume the race just to recolor it. It waits.
+StaticPopupDialogs["KEYSTONEGHOST_COLORVISION_LATER"] = {
+    text = "Keystone Ghost — color vision set to %s.|nThe race colors change on your next reload, after this key.",
+    button1 = OKAY,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
 local Options = {}
 KG.Options = Options
+
+--- Say ONCE, on a fresh install that arrived with WoW's own colorblind mode already
+--- on (Fredrik 2026-08-02), that we chose a palette without being asked — and where
+--- to correct it. His own words on why the pointer is needed: "I don't know anymore
+--- where we left that option."
+---
+--- A CHAT LINE, not the popup he suggested, and the reasoning is worth keeping: in
+--- the common case nothing is wrong. Protan and deutan share our pair, so for most of
+--- the players this fires for we guessed RIGHT, and a modal would interrupt a first
+--- login (already carrying the MOVE ME placement handle) to announce a success. Only
+--- a tritan player actually needs to act, and for them the dropdown tooltip carries
+--- the same explanation at the moment they go looking. Loud enough to explain why the
+--- bar does not match the screenshots; quiet enough not to make a condition an event.
+function Options.NoticeSeededPalette()
+    local db = KG.db
+    if not db.colorVisionSeeded or db.colorVisionNoticed then return end
+    db.colorVisionNoticed = true -- said once, whether or not it was read
+    print("|cff88ccffKeystoneGhost|r: your game has colorblind mode on, so the race runs in orange and blue instead of green and red. Change the type under Options, AddOns, Keystone Ghost, or type /kg options.")
+end
 
 local function AddCheckbox(category, variable, name, tooltip, default, get, set)
     local setting = Settings.RegisterProxySetting(category, variable,
@@ -90,11 +132,53 @@ function Options:Setup()
         function() return KG.db.sharePartyNames == true end,
         function(value) KG.db.sharePartyNames = value and true or false end)
 
+    -- The Finish Photo share button (Fredrik 2026-08-06): one checkbox for
+    -- whether the button exists at all, one dropdown for where it speaks.
+    -- Guild is his chosen default door. Both re-read live by ShowSummary, so
+    -- a change lands on an already-open photo.
+    AddCheckbox(category, "KEYSTONEGHOST_PHOTO_SHARE",
+        "Share button after a timed key",
+        "The finish picture after a timed key carries a small share button. Clicking it sends your fresh ghost into chat as a clickable link — Keystone Ghost users click that to race your run; everyone else sees plain text. Depleted keys never offer it.",
+        true,
+        function() return KG.db.photoShare ~= false end,
+        function(value) KG.db.photoShare = value and true or false end)
+
+    if Settings.CreateDropdown and Settings.CreateControlTextContainer then
+        local SC_ORDER = { "guild", "group" }
+        local SC_LABEL = {
+            guild = "Guild chat",
+            group = "Your group (party or instance)",
+        }
+        local function GetShareChannelOptions()
+            local container = Settings.CreateControlTextContainer()
+            for i, key in ipairs(SC_ORDER) do container:Add(i, SC_LABEL[key]) end
+            return container:GetData()
+        end
+        local scSetting = Settings.RegisterProxySetting(category, "KEYSTONEGHOST_PHOTO_SHARE_CHANNEL",
+            Settings.VarType.Number, "Share button sends to", 1,
+            function()
+                for i, key in ipairs(SC_ORDER) do
+                    if key == KG.db.photoShareChannel then return i end
+                end
+                return 1
+            end,
+            function(value)
+                KG.db.photoShareChannel = SC_ORDER[value] or "guild"
+            end)
+        Settings.CreateDropdown(category, scSetting, GetShareChannelOptions,
+            "Where the share button speaks. Your group means the people you just ran with — instance chat in a group-finder group, party chat otherwise. Not in that channel when you click? The addon says so in chat and sends nothing.")
+    end
+
     -- Color vision (Fredrik 2026-07-21): the verdict red/green pair swaps for
     -- the three most common color-vision deficiencies. Dropdown shape verified
     -- against a live 12.x user in this install (BugSack: CreateControlTextContainer
-    -- + CreateDropdown over a proxy setting). The whole UI follows instantly —
-    -- every verdict site reads Style.GREEN/RED by reference.
+    -- + CreateDropdown over a proxy setting).
+    --
+    -- LOCKED AT LOAD since 2026-08-02 (his call): the pick is saved here but the
+    -- palette is only read at login/reload, so a race can never change color under
+    -- you mid-key. Changing it prints one line saying when it takes effect. This is
+    -- also why Style may cache the rendered pair — with no mid-session swap the
+    -- cache has exactly one invalidation point, and it is before anything draws.
     if Settings.CreateDropdown and Settings.CreateControlTextContainer then
         local CV_ORDER = { "default", "protanopia", "deuteranopia", "tritanopia" }
         local CV_LABEL = {
@@ -112,18 +196,23 @@ function Options:Setup()
             Settings.VarType.Number, "Color vision", 1,
             function()
                 for i, key in ipairs(CV_ORDER) do
-                    if key == (KG.db.colorVision or "default") then return i end
+                    if key == KG.db.colorVision then return i end
                 end
                 return 1
             end,
             function(value)
-                KG.db.colorVision = CV_ORDER[value] or "default"
-                KG.Style.ApplyColorVision(KG.db.colorVision)
-                KG.Bar:Refresh()
-                KG.Splits:Refresh()
+                local picked = CV_ORDER[value] or "default"
+                if picked == KG.db.colorVision then return end
+                KG.db.colorVision = picked
+                -- Deliberately NOT applied here: no Style call, no refresh. The pick
+                -- is saved; the prompt only decides WHEN it is read.
+                local label = CV_LABEL[picked] or picked
+                local racing = KG.Recorder and KG.Recorder:IsActive()
+                StaticPopup_Show(racing and "KEYSTONEGHOST_COLORVISION_LATER"
+                    or "KEYSTONEGHOST_COLORVISION_RELOAD", label)
             end)
         Settings.CreateDropdown(category, cvSetting, GetColorVisionOptions,
-            "Swap the ahead/behind verdict colors for common color-vision deficiencies. Applies everywhere a red/green verdict shows — the Gap, the zone, roster deltas.")
+            "Swap the ahead/behind verdict colors for common color-vision deficiencies: the Gap, the zone, roster deltas. If your game's own colorblind mode is on, a fresh install starts on the orange and blue pair without being asked — this is where you correct that. Takes effect on your next login or /reload, never in the middle of a key.")
     end
 
     -- Death markers (Fredrik 2026-07-22). Panel, not Edit Mode, by his call and

@@ -80,6 +80,11 @@ function KG.InitDB()
     if db.shareRouteData == nil then db.shareRouteData = true end -- export: embedded route (click-to-load)
     if db.sharePartyNames == nil then db.sharePartyNames = false end -- export: party names — OPT-IN
                             -- (privacy default, Fredrik 2026-07-20; off = spec labels only)
+    if db.photoShare == nil then db.photoShare = true end -- the Finish Photo's share
+                            -- button (Fredrik 2026-08-06); the checkbox is the opt-out
+    db.photoShareChannel = db.photoShareChannel or "guild" -- where that button speaks:
+                            -- "guild" | "group" (group = instance chat when in one, else
+                            -- raid/party) — his call: "Guild is probably default"
     if db.closeOnCopy == nil then db.closeOnCopy = true end -- copy window: Ctrl+C closes it
                             -- (Fredrik 2026-07-26). Default ON because the StaticPopup it
                             -- replaced always closed — the checkbox is the opt-out, not a new habit.
@@ -99,7 +104,23 @@ function KG.InitDB()
     -- BEFORE Start()'s MigrateDB, which is what makes this order-proof.
     if db.placed == nil and db.schemaVersion ~= nil then db.placed = true end
     db.introShown = nil -- retired same-day draft key (shown-once; never shipped)
-    db.colorVision = db.colorVision or "default" -- verdict palette (Options dropdown, 2026-07-21)
+    -- Verdict palette (Options dropdown, 2026-07-21). ALWAYS a string from here on —
+    -- his 2026-08-02 call: "I'm fine with 'default' being default and that you have to
+    -- change it to get a different value there." A brief nil-until-picked design was
+    -- correct and cost nothing at runtime, but it made "never chose" and "chose Default"
+    -- two states to keep straight, and one state is worth more than the distinction.
+    --
+    -- The seed still happens, just ONCE and here rather than on every read: a first
+    -- login takes its palette from the game's own colorblindMode toggle
+    -- (Style.DefaultColorVision) and stamps the result. `colorVisionSeeded` records
+    -- that we chose rather than the player, which is what earns the one-time chat
+    -- notice. Installs stamped before today are already "default" and are left alone,
+    -- so no existing palette moves on an update.
+    if db.colorVision == nil then
+        db.colorVision = (KG.Style and KG.Style.DefaultColorVision and KG.Style.DefaultColorVision())
+            or "default"
+        if db.colorVision ~= "default" then db.colorVisionSeeded = true end
+    end
     db.deathMarkers = db.deathMarkers or "all" -- tombstones: "none" | "yours" | "all"
                             -- (Options dropdown, 2026-07-22). DISPLAY-ONLY: a ghost's pace
                             -- never depends on this — its recorded clock already carries

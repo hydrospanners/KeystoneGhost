@@ -23,6 +23,12 @@ Style.GRAY = { 0.55, 0.55, 0.55 } -- disarmed/neutral (matches Splits' pending g
 -- most common color-blindness type"). The verdict pair swaps wholesale; every
 -- verdict site reads Style.GREEN/RED by TABLE REFERENCE each refresh, so
 -- ApplyColorVision mutates the two tables in place and the whole UI follows.
+--
+-- CALLED ONCE, AT LOAD (Core), and never again while the player is online — his
+-- 2026-08-02 call: the options dropdown saves the pick and prints when it will
+-- apply, so a race can never change color under you mid-key. The in-place
+-- mutation still matters, because Style's own rendered strings and every
+-- reference-holding caller are seeded from these tables before the first draw.
 -- Pairs: red-green deficiencies (protan/deutan) get the standard blue/orange
 -- accessible pair; tritan (blue-yellow) keeps red but pairs it with teal.
 -- Identity colors (chest ticks, pairing plates, accent) are NOT verdicts and
@@ -34,22 +40,60 @@ Style.COLOR_VISION = {
     tritanopia   = { good = { 0.1, 0.8, 0.75 }, bad = { 0.95, 0.3, 0.4 } },
 }
 
+local function RgbHex(c)
+    return string.format("%02x%02x%02x",
+        math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5))
+end
+
+-- The verdict pair pre-rendered as text (2026-08-02). Sites that color a WIDGET read
+-- Style.GREEN/RED by reference and cost nothing; sites that color a TOKEN INSIDE a
+-- string need hex, and those used to run string.format + three math.floor per draw —
+-- at the bar's 10 Hz that is ~40-80 throwaway strings a second to rediscover a value
+-- that changes when the player opens the options panel, which is to say almost never.
+-- Rebuilt only by ApplyColorVision below. Callers still ask per draw: the contract
+-- ("never cache the palette yourself") is exactly what makes this safe to cache HERE.
+local goodHex, badHex = RgbHex(Style.GREEN), RgbHex(Style.RED)
+local goodEscape, badEscape = "|cff" .. goodHex, "|cff" .. badHex
+
+--- The palette to start a FRESH install on, taken from the game's own accessibility
+--- toggle (2026-08-02, his question: "are we building things that already exist?").
+---
+--- `colorblindMode` is real and live in this client — EllesmereUINameplates reads it,
+--- Auctionator and FriendGroups use the ENABLE_COLORBLIND_MODE global that mirrors it
+--- — but it is a BOOLEAN, and what it drives is text substitution (money icons become
+--- letters, an extra tooltip line) rather than any repainting. So it cannot tell us
+--- WHICH deficiency, and it is no substitute for the three-way pick. It is still the
+--- best first guess we have: someone who turned it on has told the game something.
+---
+--- Guessing deuteranopia is nearly free, because our protan and deutan palettes are
+--- the SAME pair (blue / orange). Only a tritan player is guessed wrong, and they
+--- have the dropdown. Used ONLY when db.colorVision is unset — never to overrule a
+--- player's pick, and never to change the palette an existing install already runs.
+function Style.DefaultColorVision()
+    if not _G.GetCVar then return "default" end
+    local ok, v = pcall(_G.GetCVar, "colorblindMode")
+    if ok and (v == "1" or v == 1) then return "deuteranopia" end
+    return "default"
+end
+
 function Style.ApplyColorVision(mode)
     local p = Style.COLOR_VISION[mode] or Style.COLOR_VISION.default
     for i = 1, 3 do
         Style.GREEN[i] = p.good[i]
         Style.RED[i] = p.bad[i]
     end
+    goodHex, badHex = RgbHex(Style.GREEN), RgbHex(Style.RED)
+    goodEscape, badEscape = "|cff" .. goodHex, "|cff" .. badHex
 end
 
-local function RgbHex(c)
-    return string.format("%02x%02x%02x",
-        math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5))
-end
+--- Verdict colors as chat-escape hex ("RRGGBB") — palette-aware, allocation-free.
+function Style.GoodHex() return goodHex end
+function Style.BadHex() return badHex end
 
---- Verdict colors as chat-escape hex (recomputed per call — palette-aware).
-function Style.GoodHex() return RgbHex(Style.GREEN) end
-function Style.BadHex() return RgbHex(Style.RED) end
+--- The same pair as ready-made color escapes ("|cffRRGGBB"), for coloring one token
+--- inside a line: `Style.BadEscape() .. text .. "|r"` allocates once, not three times.
+function Style.GoodEscape() return goodEscape end
+function Style.BadEscape() return badEscape end
 Style.TEXT = { 0.9, 0.9, 0.9 }    -- Ellesmere objective text color
 Style.BAR_BG = { 0.12, 0.12, 0.12, 0.9 }
 Style.TICK3 = { 0.4, 1, 0.4 }     -- +3 threshold tick
