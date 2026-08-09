@@ -2,6 +2,47 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.13.0] - 2026-08-09
+
+- Finishing a key now ends on a real end screen. Under the finish picture, right
+  where the ghost roster sat during the run: your total time with how far under
+  (or over) the timer you landed, then you and the two ghosts that finished
+  closest to your time, fastest first — each with key level, chest tier, final
+  time, and how far ahead of it you finished. Ghosts are named the way the
+  Ghost Library names them, by the character that recorded them.
+- The finish picture itself got a ceremony: the race track steps aside, a
+  checkered flag (the game's own racing flag) plants itself where the finish
+  line was, and your character hops beside it. Deplete the key and there is no
+  flag — you get the dizzy wobble instead.
+- Where the track stood, the run's numbers take over: deaths and the time they
+  cost (a deathless run says so in green), enemy forces at the finish with how
+  much extra you killed, your best and worst boss against the ghost you raced,
+  and how far away the next chest was — or, on a +3, how much room you had to
+  spare.
+- On your own row of the end screen sits a share button — on the row so there
+  is no doubt which ghost it sends. One click sends your fresh ghost into guild
+  chat as a clickable link: guildies with Keystone Ghost click it to race your
+  run, everyone else just sees a short line of text. The tooltip says where it
+  posts. Two new options come with it: turn the button off entirely, or point
+  it at your group (instance or party chat) instead of the guild. Depleted keys
+  get the end screen but never the share button.
+- Long route names no longer walk out of the window. When the route-and-pull
+  line is too wide, the "Pull #X vs Ghost #Y" part moves to its own row and the
+  bar grows a row to hold it — the track stays put. Short names keep the old
+  one-liner.
+- `/kg test` now finishes like a real key: each demo loop ends on the full end
+  screen for five seconds — verdict, stats, flag and all — before the next loop
+  starts. One loop shows a win, the next a loss, so both looks get demoed.
+- Color vision settled down: the palette is read once at login, so the race can
+  never change colors mid-key. Picking a different type in the options asks for
+  a reload (or, mid-key, waits until after the run). If your game's own
+  colorblind mode is on, a fresh install starts on the orange and blue pair and
+  says so once in chat, naming where to change it.
+- A dungeon with no ghosts yet says so in one line under its header, instead of
+  repeating the same hint everywhere in the Ghost Library. With Raider.IO
+  installed, the line also names where the first ghost will come from; without
+  it, the Import button in the bottom bar is the way in.
+
 ## [0.12.0] - 2026-07-30
 
 - All the heavy Raider.IO work now happens while you walk in and during the key
