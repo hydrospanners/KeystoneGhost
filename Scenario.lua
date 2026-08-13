@@ -372,11 +372,14 @@ function S:GetPartyContext()
 end
 
 --- Inspected specID for a unit after its INSPECT_READY fired (0/garbage → nil).
---- Usage shape verified against live Details (core/inspect.lua: NotifyInspect →
---- INSPECT_READY(guid) → GetInspectSpecialization(unit)).
+--- 12.1 removed the GetInspectSpecialization global; C_SpecializationInfo is its
+--- home now (wow-api-verify 2026-08-13: Blizzard docs live
+--- SpecializationInfoDocumentation.lua + wiki 12.1.0 API_changes, build 120100).
+--- Flow unchanged: NotifyInspect → INSPECT_READY(guid) → this. readNum absorbs
+--- the identity-secret case (secret specID → nil → member simply not stamped).
 function S:GetInspectSpecID(unit)
-    if not GetInspectSpecialization then return nil end
-    local ok, spec = pcall(GetInspectSpecialization, unit)
+    if not (C_SpecializationInfo and C_SpecializationInfo.GetInspectSpecialization) then return nil end
+    local ok, spec = pcall(C_SpecializationInfo.GetInspectSpecialization, unit)
     if not ok then return nil end
     spec = readNum(spec)
     if spec and spec > 0 then return spec end

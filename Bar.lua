@@ -775,7 +775,10 @@ local function Build()
         local cloth = flag:CreateTexture(nil, "ARTWORK")
         cloth:SetAtlas("worldquest-icon-race")
         cloth:SetSize(30, 30)
-        cloth:SetPoint("TOP", 0, -2)
+        -- Bottom-anchored on his 2026-08-10 call: top-anchored in the 48 px
+        -- frame the flag floated 16 px above the hopping head; now both stand
+        -- on the same baseline (the head's rest pose — the hop leaves it).
+        cloth:SetPoint("BOTTOM", 0, 0)
     else
         local pole = flag:CreateTexture(nil, "ARTWORK")
         pole:SetTexture("Interface\\Buttons\\WHITE8x8")
