@@ -1,8 +1,8 @@
-## Interface: 120007, 120100
+## Interface: 120100
 ## Title: Keystone Ghost
 ## Notes: Race a ghost of your best Mythic+ runs — at-a-glance time and count pace.
 ## Author: Hydrospanners
-## Version: 0.13.0
+## Version: 0.13.1
 ## Category: Dungeons & Raids
 ## X-Curse-Project-ID: 1619149
 ## IconTexture: Interface\AddOns\KeystoneGhost\minimap-icon.tga

@@ -2,6 +2,14 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.13.1] - 2026-08-14
+
+- Ready for patch 12.1. The patch removed the function that fills in party
+  members' specs after a run is saved; the addon now uses its replacement, so
+  spec labels on saved ghosts keep appearing.
+- The checkered flag now stands on the same line as your hopping character
+  instead of floating a little above it.
+
 ## [0.13.0] - 2026-08-09
 
 - Finishing a key now ends on a real end screen. Under the finish picture, right
