@@ -125,6 +125,7 @@ KG.CopyPrompts = {
     EXPORT = { "Copy this ghost's export string:", "export copied." },
     LINK = { "Copy the raider.io run link:", "link copied." },
     LIBRARY = { "Paste this in your browser to open your library online:", "library link copied." },
+    MDTROUTE = { "Copy this, then paste it in MDT under Import Preset:", "route string copied. Paste it in MDT under Import Preset." },
 }
 
 --- Open the copy window for one of the CopyPrompts kinds.
@@ -134,7 +135,7 @@ function KG.ShowCopy(kind, text)
 end
 
 StaticPopupDialogs["KEYSTONEGHOST_IMPORT"] = {
-    text = "Keystone Ghost — paste an export string:",
+    text = "Keystone Ghost: paste an export string",
     button1 = ACCEPT,
     button2 = CANCEL,
     hasEditBox = true,
@@ -149,52 +150,42 @@ StaticPopupDialogs["KEYSTONEGHOST_IMPORT"] = {
         if run then
             local routeNote = ""
             if run.routeHash and KG.Ghosts:RouteForHash(run.routeHash) then
-                routeNote = (" · route \"%s\" included — /kg route (or click the ghost's badge) loads it into MDT")
+                routeNote = (" · route \"%s\" included. /kg route hands it to MDT")
                     :format(KG.Ghosts:RouteForHash(run.routeHash).name or "?")
             elseif run.routeName then
                 routeNote = " · route: " .. run.routeName
             end
-            print(string.format("|cff88ccffKeystoneGhost|r: imported %s's %s +%d ghost (%s)%s — racing it next key.",
+            print(string.format("|cff88ccffKeystoneGhost|r: imported %s's %s +%d ghost (%s)%s. Racing it next key.",
                 run.importedFrom, KG.Math.TierLabel(run.chests), run.level,
                 KG.Math.FormatClock(run.durationSec), routeNote))
             KG.Library:RefreshIfShown() -- the new row (auto-pinned) appears in place
             if newerVersion then
-                print(string.format("|cff88ccffKeystoneGhost|r: that string was made with v%s — you run v%s. Update if the import looks off.",
+                print(string.format("|cff88ccffKeystoneGhost|r: that string was made with v%s and you run v%s. Update if the import looks off.",
                     newerVersion, KG.VERSION))
             end
         else
-            print("|cff88ccffKeystoneGhost|r: import failed — " .. (err or "unknown error"))
+            print("|cff88ccffKeystoneGhost|r: import failed: " .. (err or "unknown error"))
         end
     end,
     EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
-StaticPopupDialogs["KEYSTONEGHOST_LOADROUTE"] = {
-    text = "Keystone Ghost — load %s into MDT?",
-    button1 = ACCEPT,
-    button2 = CANCEL,
-    OnAccept = function(self, data)
-        local ok, err = KG.Route:LoadIntoMDT(data)
-        if ok then
-            Print("route handed to MDT.")
-        else
-            Print("route load failed — " .. (err or "unknown error"))
-        end
-    end,
-    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-}
-
---- Confirm-then-load for an embedded route (ghost badge click / "/kg route").
+--- Hand an embedded route to MDT (ghost badge click / Library route cell /
+--- "/kg route"): the route becomes an MDT IMPORT STRING in the copy window —
+--- MDT's own "Import Preset" dialog reads it, and the paste is the consent.
+--- The string needs nothing from MDT to build (native client encoding), so it
+--- works even with MDT missing entirely — the receiver can install MDT later
+--- or forward the string; the prompt says what to do with it. (The one-click
+--- import for pre-6.2 MDT was removed 2026-08-18 — latest-only policy.)
 function KG.RequestRouteLoad(rd)
     if not rd then return end
-    if not _G.MDT then
-        Print("MDT is not loaded — the embedded route needs it.")
-        return
+    local str, err = KG.Route.BuildMDTImportString(rd)
+    if str then
+        KG.ShowCopy("MDTROUTE", str)
+    else
+        Print("route export failed: " .. (err or "unknown error"))
     end
-    local label = (rd.name or "route")
-        .. (rd.createdBy and rd.createdBy.name and (" (by " .. rd.createdBy.name .. ")") or "")
-    StaticPopup_Show("KEYSTONEGHOST_LOADROUTE", '"' .. label .. '"', nil, rd)
 end
 
 SLASH_KEYSTONEGHOST1 = "/keystoneghost"
@@ -221,7 +212,7 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         KG.testMode = not KG.testMode
         if KG.testMode then KG.Bar.ResetTestLoop() end -- loop 1, fresh DB scan
         Print("test mode " .. (KG.testMode
-            and "ON — demo race at 10x speed, alternating loops: full roster (your real ghosts when stored) ↔ Raider.IO ghost only (a converted replay races you — the first-run look)."
+            and "ON. Demo race at 10x speed, alternating loops: full roster, then Raider.IO ghost only (the first-run look)."
             or "off."))
         KG.Bar:Refresh()
     elseif cmd == "list" then
@@ -240,13 +231,13 @@ SlashCmdList.KEYSTONEGHOST = function(input)
             level = tonumber(arg) or KG.db.lastRecorded.level
         end
         if not mapID or not level then
-            Print("nothing to export — be in a key, or finish a run first (/kg export [level]).")
+            Print("nothing to export. Be in a key, or finish a run first (/kg export [level]).")
         else
             local str, err = KG.Ghosts:ExportString(mapID, level)
             if str then
                 KG.ShowCopy("EXPORT", str)
             else
-                Print("export failed — " .. (err or "unknown error"))
+                Print("export failed: " .. (err or "unknown error"))
             end
         end
     elseif cmd == "online" or cmd == "library" then
@@ -255,7 +246,7 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         local url, err, n = KG.Ghosts:ExportLibraryURL()
         if url then
             KG.ShowCopy("LIBRARY", url)
-            Print(string.format("%d ghost%s in the link — paste it in your browser.", n, n == 1 and "" or "s"))
+            Print(string.format("%d ghost%s in the link. Paste it in your browser.", n, n == 1 and "" or "s"))
         else
             Print(err or "nothing to open online yet.")
         end
@@ -263,7 +254,7 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         StaticPopup_Show("KEYSTONEGHOST_IMPORT")
     elseif cmd == "options" or cmd == "config" then
         if not KG.Options:Open() then
-            Print("options panel unavailable — Settings API not found.")
+            Print("options panel unavailable: Settings API not found.")
         end
     elseif cmd == "route" then
         -- The raced ghost's embedded route first (live race or Finish Photo), else
@@ -278,9 +269,9 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         if rd then
             KG.RequestRouteLoad(rd)
         elseif here then
-            Print("no route for this dungeon — race or import a ghost that carries one.")
+            Print("no route for this dungeon. Race or import a ghost that carries one.")
         else
-            Print("no embedded route found — race or import a ghost that carries one.")
+            Print("no embedded route found. Race or import a ghost that carries one.")
         end
     elseif cmd == "sharetag" then
         -- Undocumented (dev-tier until the sharing UI's reset action lands in the
@@ -288,7 +279,7 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         -- keep old imports grouped under the old tag.
         if arg == "reset" then
             KG.db.shareTag = nil
-            Print("share tag reset — a fresh one mints on your next export.")
+            Print("share tag reset. A fresh one mints on your next export.")
         else
             Print("share tag: " .. (KG.db.shareTag or "none yet (mints on your first export)")
                 .. ". Reset: /kg sharetag reset")
@@ -302,7 +293,7 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         -- also work undocumented (dev tier; hide/show/toggle keep-or-cut is
         -- Fredrik's call — TASKS #6).
         Print("commands:")
-        print("   /kg — the Ghost Library: browse, pin, share, delete your stored ghosts")
-        print("   /kg options — addon options (display + behavior; size & position live in Edit Mode)")
+        print("   /kg - the Ghost Library: browse, pin, share, delete your stored ghosts")
+        print("   /kg options - addon options (display + behavior; size & position live in Edit Mode)")
     end
 end

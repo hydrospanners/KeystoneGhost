@@ -364,17 +364,17 @@ function Codec.ValidatePayload(payload)
     -- portal link into the import box; say what it actually is.
     if payload.library then
         return nil, nil,
-            "that's a whole-library link for the web viewer — paste the link in your browser, and paste a single ghost's export string here"
+            "that's a whole-library link for the web viewer: paste the link in your browser. A single ghost's export string goes here"
     end
     local v = tonumber(payload.v)
     if not v or not Codec.SUPPORTED_FORMATS[v] then
         if v and v > MaxSupportedFormat() then
             return nil, nil, string.format(
-                "made by a newer KeystoneGhost (format v%d; this version reads up to v%d) — update to import it",
+                "made by a newer KeystoneGhost (format v%d; this version reads up to v%d), update to import it",
                 v, MaxSupportedFormat())
         end
         return nil, nil, string.format(
-            "unsupported format (%s) — ask the sender to re-export with a current KeystoneGhost",
+            "unsupported format (%s). Ask the sender to re-export with a current KeystoneGhost",
             tostring(payload.v))
     end
     local exporter = type(payload.exporter) == "string" and payload.exporter:sub(1, 60) or "Unknown"

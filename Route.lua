@@ -208,6 +208,138 @@ function Route.CleanRouteData(raw)
     return out
 end
 
+-- ── MDT resolution (6.2+, latest-only) ────────────────────────────────────────
+--
+-- LATEST-ONLY POLICY (Fredrik 2026-08-18): this build targets the current MDT
+-- (MDT_BUILT_FOR below) and carries no backwards compatibility — nobody plays
+-- on an old MDT; addons refresh with the client. When either side moves, one
+-- chat line points at the likely fix (see MaybeWarnDrift); crash safety stays
+-- (everything nil-guards), elaborate error messaging deliberately doesn't.
+--
+-- MDT 6.2 split in two and made the addon table file-local: no global carries
+-- the data tables, the public MythicDungeonToolsAPI cannot price pulls (its
+-- GetEnemyForces takes an npc id that only the private enemy table could
+-- resolve, and pulls reference enemies by index), and the route database only
+-- exists once the LoadOnDemand UI half has loaded. So the resolver assembles
+-- an MDT-shaped table from pieces that are demand-loaded at the route read and
+-- never touched while idle:
+--
+--   dungeonEnemies/dungeonList/mapInfo — the KeystoneGhost_MDTData module
+--     (LoadOnDemand, `Dependencies: MythicDungeonTools`), whose .toc loads
+--     MDT's own static dungeon files from the user's install into its
+--     namespace — the same cross-folder include MDT's UI half is built on.
+--     Nothing is bundled and nothing can go stale against the installed MDT.
+--     Its Dependencies line makes our single LoadAddOn call double as the
+--     "MDT installed and enabled" check.
+--   GetDB — MythicDungeonToolsDB.global (the UI half's SavedVariables) after
+--     C_AddOns.LoadAddOn("MythicDungeonTools_UI"). The public API:GetDB() is
+--     kept as a fallback only: it returns a pre-UI bootstrap table that goes
+--     stale the moment the real database initializes (the NextPullTracker
+--     addon documents the same behaviour).
+--
+-- LoadAddOn is synchronous — when it returns true, the loaded addon's tables
+-- exist — so there is no event to wait on and nothing polls. Everything here
+-- is read-only and pcall-guarded; every failure returns nil, which callers
+-- already treat as "MDT absent": the degradation this module always promised.
+
+local modernMDT -- session cache, set only on a fully successful resolve
+
+--- The MDT version this build is written and verified against. Bump it as part
+--- of re-verifying the touchpoints after an MDT minor/major update (AGENTS.md
+--- "External addon interfaces"). Patch drift is deliberately silent: MDT
+--- patches are data fixes, and our data reads their live files, so it cannot
+--- go stale.
+local MDT_BUILT_FOR = "6.2.4"
+
+--- Pure comparator (offline-tested): "older" | "newer" when MAJOR.MINOR
+--- differs, nil when in sync or unparseable.
+function Route.MDTVersionDrift(installed, builtFor)
+    local iM, im = tostring(installed or ""):match("^v?(%d+)%.(%d+)")
+    local bM, bm = tostring(builtFor or ""):match("^v?(%d+)%.(%d+)")
+    if not (iM and bM) then return nil end
+    iM, im, bM, bm = tonumber(iM), tonumber(im), tonumber(bM), tonumber(bm)
+    if iM == bM and im == bm then return nil end
+    if iM < bM or (iM == bM and im < bm) then return "older" end
+    return "newer"
+end
+
+-- One line, once per session, only when a route feature actually engages —
+-- and BEFORE the data load, so a future MDT that moves its folders (empty
+-- tables, silent nil) still gets its drift explained.
+local warnedDrift
+local function MaybeWarnDrift()
+    if warnedDrift then return end
+    warnedDrift = true
+    local C = rawget(_G, "C_AddOns")
+    if not (type(C) == "table" and type(C.GetAddOnMetadata) == "function") then return end
+    -- Only for an ENABLED MDT. Metadata reads fine for disabled addons, and
+    -- telling someone who turned MDT off to update it is advice about a
+    -- feature they opted out of (council catch, 2026-08-18). Disabled stays
+    -- silent, like everything else on the nil path.
+    if type(C.GetAddOnEnableState) == "function" then
+        local okE, state = pcall(C.GetAddOnEnableState, "MythicDungeonTools")
+        if okE and state == 0 then return end
+    end
+    local ok, ver = pcall(C.GetAddOnMetadata, "MythicDungeonTools", "Version")
+    local drift = ok and Route.MDTVersionDrift(ver, MDT_BUILT_FOR) or nil
+    if drift == "older" then
+        print(("|cff88ccffKeystoneGhost|r: your MDT (%s) is older than this build expects (%s). Update MDT if route features misbehave."):format(ver, MDT_BUILT_FOR))
+    elseif drift == "newer" then
+        print(("|cff88ccffKeystoneGhost|r: your MDT (%s) is newer than this build knows (%s). If route features misbehave, check for a Keystone Ghost update."):format(ver, MDT_BUILT_FOR))
+    end
+end
+
+local function DemandLoad(name)
+    local C = rawget(_G, "C_AddOns")
+    if type(C) ~= "table" or type(C.LoadAddOn) ~= "function" then return false end
+    local ok, loaded = pcall(C.LoadAddOn, name)
+    return ok and loaded == true
+end
+
+local function ModernRouteDB()
+    local sv = rawget(_G, "MythicDungeonToolsDB")
+    if type(sv) == "table" and type(sv.global) == "table" then return sv.global end
+    local api = rawget(_G, "MythicDungeonToolsAPI")
+    if type(api) == "table" and type(api.GetDB) == "function" then
+        local ok, db = pcall(api.GetDB, api)
+        if ok and type(db) == "table" then return db end
+    end
+    return nil
+end
+
+--- The table every MDT reader below consumes, or nil. Safe to call repeatedly;
+--- only the first successful resolve does any loading. In combat it returns
+--- nil rather than demand-loading (the next read retries — route reads happen
+--- at walk-in/key start, out of combat).
+function Route.ResolveMDT()
+    if modernMDT then return modernMDT end
+    local icl = rawget(_G, "InCombatLockdown")
+    if type(icl) == "function" and icl() then return nil end
+    MaybeWarnDrift()
+    if not DemandLoad("KeystoneGhost_MDTData") then return nil end
+    local data = rawget(_G, "KeystoneGhost_MDTData")
+    if type(data) ~= "table" or type(data.dungeonEnemies) ~= "table"
+        or next(data.dungeonEnemies) == nil then
+        -- Module loaded but empty: MDT rotated its per-expansion data folder
+        -- (see the module's maintenance note). Treated as MDT-absent.
+        return nil
+    end
+    DemandLoad("MythicDungeonTools_UI") -- best effort; ModernRouteDB has its own fallback
+    modernMDT = {
+        dungeonEnemies = data.dungeonEnemies,
+        dungeonList = data.dungeonList,
+        mapInfo = data.mapInfo,
+        GetDB = ModernRouteDB,
+    }
+    return modernMDT
+end
+
+--- Test hook (and belt for a mid-session MDT install): forget the composite so
+--- the next ResolveMDT rebuilds it.
+function Route._ResetResolvedMDT()
+    modernMDT = nil
+end
+
 --- Zero-interaction route pick (Fredrik, 2026-07-19): the preset last SELECTED in
 --- MDT's dropdown for the ACTIVE dungeon. MDT remembers that selection per dungeon
 --- (db.currentPreset[dungeonIdx] = index into db.presets[dungeonIdx]), so this works
@@ -225,7 +357,7 @@ end
 --- capture succeeded: hash, pulls, createdBy, uid, dungeonIdx, sublevel, week,
 --- difficulty.
 function Route:GetForChallengeMap(challengeMapID)
-    local MDT = _G.MDT
+    local MDT = Route.ResolveMDT()
     if not MDT or type(MDT.GetDB) ~= "function" or not challengeMapID then return nil end
     local ok, mdtDb = pcall(MDT.GetDB, MDT)
     if not ok or type(mdtDb) ~= "table" then return nil end
@@ -279,16 +411,13 @@ function Route:GetForChallengeMap(challengeMapID)
         out.difficulty = tonumber(preset.value.difficulty)
         local cb = preset.createdBy or preset.value.createdBy
         if type(cb) == "table" and type(cb.name) == "string" then
-            local classFile
-            if type(MDT.GetClassFileByIndex) == "function" then
-                local okC, cf = pcall(MDT.GetClassFileByIndex, MDT, cb.classIdx)
-                classFile = (okC and type(cf) == "string") and cf or nil
-            end
+            -- classFile stays nil on capture since MDT 6.2 (GetClassFileByIndex
+            -- was legacy-global API; latest-only policy dropped that era).
+            -- CleanRouteData still accepts classFile from older wire strings.
             out.createdBy = {
                 name = cb.name:sub(1, 48),
                 realm = type(cb.realm) == "string" and cb.realm:sub(1, 48) or nil,
                 classIdx = tonumber(cb.classIdx),
-                classFile = classFile, -- resolved NOW so receivers color it without MDT
             }
         end
     end)
@@ -297,11 +426,13 @@ function Route:GetForChallengeMap(challengeMapID)
     return out
 end
 
--- ── Click-to-load: hand a stored route back to MDT ────────────────────────────
+-- ── Click-to-load: the ghost's route as an MDT import string ──────────────────
 
---- Rebuild an importable MDT preset from a Route Store entry. Pulls are deep-copied
---- AGAIN — MDT stores imported presets by reference and mutates them on edit; our
---- Route Store must never be MDT's working copy.
+--- Rebuild an importable MDT preset from a Route Store entry — the table the
+--- import string serializes, in the exact shape MDT's import validation
+--- expects. Pulls are deep-copied AGAIN — MDT stores imported presets by
+--- reference and mutates them on edit; our Route Store must never be MDT's
+--- working copy.
 function Route.BuildMDTPreset(rd)
     return {
         text = rd.name or "KeystoneGhost route",
@@ -322,25 +453,36 @@ function Route.BuildMDTPreset(rd)
     }
 end
 
---- Load a Route Store entry into MDT — the exact chain MDT's own live-session
---- receive uses (Modules/Transmission.lua): ValidateImportPreset → ImportPreset;
---- ShowInterface first so the import is visible immediately (ImportPreset self-
---- defers until MDT's frames exist). Everything pcall-guarded: MDT stays an
---- optional dependency. @return ok, err
-function Route:LoadIntoMDT(rd)
-    local MDT = _G.MDT
-    if type(MDT) ~= "table" then return false, "MDT is not loaded" end
-    if type(rd) ~= "table" or type(rd.pulls) ~= "table" then return false, "no route data on this ghost" end
-    if type(MDT.ValidateImportPreset) ~= "function" or type(MDT.ImportPreset) ~= "function" then
-        return false, "this MDT version has no import API"
+--- The stored route as an MDT IMPORT STRING — THE delivery door: the exact
+--- format MDT's "Import Preset" dialog reads, `"!~MDT2~" .. base64(deflate(
+--- cbor))` (their Modules/Transmission.lua), built entirely from the native
+--- 12.x C_EncodingUtil client API — nothing bundled, nothing of MDT's
+--- touched, and the user's paste into MDT's own dialog is the consent.
+--- Needs nothing from MDT to build, so it works with MDT absent too (the
+--- string can be forwarded). @return str | nil, err
+function Route.BuildMDTImportString(rd)
+    if type(rd) ~= "table" or type(rd.pulls) ~= "table" then
+        return nil, "no route data on this ghost"
     end
-    local preset = Route.BuildMDTPreset(rd)
-    local okV, valid = pcall(MDT.ValidateImportPreset, MDT, preset)
-    if not okV or not valid then
-        return false, "MDT rejected the route (recorded on a different MDT version?)"
+    local CE = rawget(_G, "C_EncodingUtil")
+    local enum = rawget(_G, "Enum")
+    local method = type(enum) == "table" and type(enum.CompressionMethod) == "table"
+        and enum.CompressionMethod.Deflate or nil
+    if not (type(CE) == "table" and CE.SerializeCBOR and CE.CompressString
+        and CE.EncodeBase64 and method ~= nil) then
+        return nil, "this client can't encode MDT strings"
     end
-    if type(MDT.ShowInterface) == "function" then pcall(MDT.ShowInterface, MDT, true) end
-    local okI = pcall(MDT.ImportPreset, MDT, preset, false)
-    if not okI then return false, "MDT import errored" end
-    return true
+    local ok, str = pcall(function()
+        local serialized = CE.SerializeCBOR(Route.BuildMDTPreset(rd))
+        local compressed = CE.CompressString(serialized, method)
+        return "!~MDT2~" .. CE.EncodeBase64(compressed)
+    end)
+    if not ok or type(str) ~= "string" or str == "" then
+        return nil, "encoding failed"
+    end
+    return str
 end
+
+-- (The legacy one-click import chain — ValidateImportPreset → ImportPreset on
+-- `_G.MDT` — was removed 2026-08-18 with the latest-only policy: no user keeps
+-- an old MDT. Git history has the implementation if it is ever wanted back.)

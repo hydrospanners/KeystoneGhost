@@ -26,7 +26,7 @@ local KG = NS.KG
 -- convention for a reload-required setting, and the Library's delete dialog already
 -- speaks it. Either way the pick is SAVED: "Later" means next login, not undone.
 StaticPopupDialogs["KEYSTONEGHOST_COLORVISION_RELOAD"] = {
-    text = "Keystone Ghost — color vision set to %s.|nThe race colors change on your next reload.",
+    text = "Keystone Ghost: color vision set to %s.|nThe race colors change on your next reload.",
     button1 = "Reload now",
     button2 = "Later",
     OnAccept = function() ReloadUI() end,
@@ -37,7 +37,7 @@ StaticPopupDialogs["KEYSTONEGHOST_COLORVISION_RELOAD"] = {
 -- run would undo the point of locking the palette to load — and the recorder would
 -- have to resume the race just to recolor it. It waits.
 StaticPopupDialogs["KEYSTONEGHOST_COLORVISION_LATER"] = {
-    text = "Keystone Ghost — color vision set to %s.|nThe race colors change on your next reload, after this key.",
+    text = "Keystone Ghost: color vision set to %s.|nThe race colors change on your next reload, after this key.",
     button1 = OKAY,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
@@ -103,7 +103,7 @@ function Options:Setup()
     -- The Ghost Library door (approved design 2026-07-21): the panel's first row.
     AddButton(category, "Ghost Library", "Open Ghost Library",
         function() KG.Library:Toggle() end,
-        "Browse, pin, share and delete every stored ghost — all your characters plus imports. Also on the minimap button and bare /kg.")
+        "Browse, pin, share and delete every stored ghost, from all your characters plus imports. Also on the minimap button and bare /kg.")
 
     -- The two route-share toggles (the wrong-route pitfall: what's captured is
     -- your SELECTED route at key start, which a DPS with a stale MDT selection
@@ -118,7 +118,7 @@ function Options:Setup()
 
     AddCheckbox(category, "KEYSTONEGHOST_SHARE_ROUTE_DATA",
         "Export: route data",
-        "Embed the actual MDT route (as it was when the run was recorded) so the receiver can load it into MDT with one click. About half a KB per string.",
+        "Embed the actual MDT route (as it was when the run was recorded) so the receiver can hand it straight to MDT. About half a KB per string.",
         true,
         function() return KG.db.shareRouteData ~= false end,
         function(value) KG.db.shareRouteData = value and true or false end)
@@ -138,7 +138,7 @@ function Options:Setup()
     -- a change lands on an already-open photo.
     AddCheckbox(category, "KEYSTONEGHOST_PHOTO_SHARE",
         "Share button after a timed key",
-        "The finish picture after a timed key carries a small share button. Clicking it sends your fresh ghost into chat as a clickable link — Keystone Ghost users click that to race your run; everyone else sees plain text. Depleted keys never offer it.",
+        "The finish picture after a timed key carries a small share button. Clicking it sends your fresh ghost into chat as a clickable link. Keystone Ghost users click it to race your run; everyone else sees plain text. Depleted keys never offer it.",
         true,
         function() return KG.db.photoShare ~= false end,
         function(value) KG.db.photoShare = value and true or false end)
@@ -166,7 +166,7 @@ function Options:Setup()
                 KG.db.photoShareChannel = SC_ORDER[value] or "guild"
             end)
         Settings.CreateDropdown(category, scSetting, GetShareChannelOptions,
-            "Where the share button speaks. Your group means the people you just ran with — instance chat in a group-finder group, party chat otherwise. Not in that channel when you click? The addon says so in chat and sends nothing.")
+            "Where the share button speaks. Your group means the people you just ran with: instance chat in a group-finder group, party chat otherwise. Not in that channel when you click? The addon says so in chat and sends nothing.")
     end
 
     -- Color vision (Fredrik 2026-07-21): the verdict red/green pair swaps for
@@ -212,7 +212,7 @@ function Options:Setup()
                     or "KEYSTONEGHOST_COLORVISION_RELOAD", label)
             end)
         Settings.CreateDropdown(category, cvSetting, GetColorVisionOptions,
-            "Swap the ahead/behind verdict colors for common color-vision deficiencies: the Gap, the zone, roster deltas. If your game's own colorblind mode is on, a fresh install starts on the orange and blue pair without being asked — this is where you correct that. Takes effect on your next login or /reload, never in the middle of a key.")
+            "Swap the ahead/behind verdict colors for common color-vision deficiencies: the Gap, the zone, roster deltas. If your game's own colorblind mode is on, a fresh install starts on the orange and blue pair without being asked. This is where you correct that. Takes effect on your next login or /reload, never in the middle of a key.")
     end
 
     -- Death markers (Fredrik 2026-07-22). Panel, not Edit Mode, by his call and
@@ -245,7 +245,7 @@ function Options:Setup()
                 KG.Bar:Refresh()
             end)
         Settings.CreateDropdown(category, dmSetting, GetDeathMarkerOptions,
-            "Tombstones on the track. Yours stand where you died and stay. A ghost's stand on its own lane ahead of it and disappear as it reaches them — that's where its run lost time to the death penalty.")
+            "Tombstones on the track. Yours stand where you died and stay. A ghost's stand on its own lane ahead of it and disappear as it reaches them. That's where its run lost time to the death penalty.")
     end
 
     -- The marker hat (easter egg, Fredrik 2026-07-28). PANEL, not Edit Mode — it
@@ -267,7 +267,7 @@ function Options:Setup()
     -- unchanged, so existing choices carry over untouched.
     AddCheckbox(category, "KEYSTONEGHOST_BOUNCE",
         "Walking bounce",
-        "Your icon does a little walk-cycle hop while moving — and stands still while you fight a boss.",
+        "Your icon does a little walk-cycle hop while moving, and stands still while you fight a boss.",
         true,
         function() return KG.db.bounce ~= false end,
         function(value) KG.db.bounce = value and true or false end)
@@ -285,7 +285,7 @@ function Options:Setup()
             end)
     end
     PaceCarBox("paceCar1", "+1 sweeper",
-        "The red sweeper drives at exactly the par time — if it passes you, the key depletes. Hiding it hides its hatched wake too; the gap zone still warns about depletion.")
+        "The red sweeper drives at exactly the par time. If it passes you, the key depletes. Hiding it hides its hatched wake too; the gap zone still warns about depletion.")
     PaceCarBox("paceCar2", "+2 pace car", "Drives at exactly the +2 time. Stay ahead of it to keep the +2.")
     PaceCarBox("paceCar3", "+3 pace car", "Drives at exactly the +3 time. Stay ahead of it to keep the +3.")
 
@@ -295,7 +295,7 @@ function Options:Setup()
     -- is count-native either way.
     AddCheckbox(category, "KEYSTONEGHOST_PERCENT_DISPLAY",
         "Show % instead of count",
-        "Show enemy forces as percent — gap +3.4%, tooltips 55.2%. Untick to read the raw count instead (gap +14, tooltips 228/413). The race itself is identical; this only changes how the numbers read.",
+        "Show enemy forces as percent: gap +3.4%, tooltips 55.2%. Untick to read the raw count instead (gap +14, tooltips 228/413). The race itself is identical; this only changes how the numbers read.",
         true,
         function() return KG.db.percentDisplay ~= false end,
         function(value) KG.db.percentDisplay = value and true or false end)
@@ -306,27 +306,27 @@ function Options:Setup()
     -- split in receivers' grouping is permanent), and the row NAMES your current
     -- tag: the label reads it at panel build, the popup reads it live at click.
     StaticPopupDialogs["KEYSTONEGHOST_RESET_SHARETAG"] = {
-        text = "Keystone Ghost — really reset your Share Tag?|n|nCurrent tag: %s|n|nReceivers use this tag to group ghosts from you and your alts. After a reset, everything you share carries a NEW tag — friends' existing imports keep the old one, so your earlier and later shares stop clustering together, permanently. Sharing itself keeps working.",
+        text = "Keystone Ghost: really reset your Share Tag?|n|nCurrent tag: %s|n|nReceivers use this tag to group ghosts from you and your alts. After a reset, everything you share carries a NEW tag. Friends' existing imports keep the old one, so your earlier and later shares stop clustering together, permanently. Sharing itself keeps working.",
         button1 = "Reset it",
         button2 = CANCEL,
         OnAccept = function()
             KG.db.shareTag = nil
-            print("|cff88ccffKeystoneGhost|r: share tag reset — a fresh one mints on your next export.")
+            print("|cff88ccffKeystoneGhost|r: share tag reset. A fresh one mints on your next export.")
             KG.Library:RefreshIfShown()
         end,
         timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
     }
     AddButton(category,
-        "Share Tag: " .. (KG.db.shareTag or "none yet — mints on your first export"),
+        "Share Tag: " .. (KG.db.shareTag or "none yet (mints on your first export)"),
         "Reset Share Tag…",
         function()
             if not KG.db.shareTag then
-                print("|cff88ccffKeystoneGhost|r: no share tag yet — one mints on your first export.")
+                print("|cff88ccffKeystoneGhost|r: no share tag yet. One mints on your first export.")
                 return
             end
             StaticPopup_Show("KEYSTONEGHOST_RESET_SHARETAG", KG.db.shareTag)
         end,
-        "Your Share Tag pseudonymously groups your and your alts' exports for receivers (also shown in the Ghost Library footer). Resetting asks for confirmation first — it permanently splits how receivers group your shares.")
+        "Your Share Tag pseudonymously groups your and your alts' exports for receivers (also shown in the Ghost Library footer). Resetting asks for confirmation first. It permanently splits how receivers group your shares.")
 
     Settings.RegisterAddOnCategory(category)
 end

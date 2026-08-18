@@ -115,7 +115,7 @@ local function ClusterLine(run)
     for n in pairs(names) do list[#list + 1] = n end
     table.sort(list)
     local who = (#list > 0) and table.concat(list, ", ") or "this sender"
-    return string.format("Same account: %s — %d more ghost%s", who, count, count == 1 and "" or "s")
+    return string.format("Same account: %s (%d more ghost%s)", who, count, count == 1 and "" or "s")
 end
 
 local function RowTip(row)
@@ -130,19 +130,19 @@ local function RowTip(row)
     tip[#tip + 1] = dur
     if run.legacy == "KPG1" then
         -- Legacy-grade badge (no brand in-game — the neutral format name only).
-        tip[#tip + 1] = "KPG1 ghost code — boss times only, approximate on deathful runs"
+        tip[#tip + 1] = "KPG1 ghost code: boss times only, approximate on deathful runs"
     elseif run.legacy == "RIO" then
         -- The set word (their sources[] → "guild best"…) joins the Library tip
         -- too (his metadata question 2026-07-21) — Splits/Bar already carry it.
-        tip[#tip + 1] = "Converted Raider.IO replay" .. (run.rioSource and (" — " .. run.rioSource) or "")
-            .. " — real forces curve (per-award steps), clock honest to ±3 s"
+        tip[#tip + 1] = "Converted Raider.IO replay" .. (run.rioSource and (" · " .. run.rioSource) or "")
+            .. ". Real forces curve (per-award steps), clock honest to ±3 s"
     end
     if run.routeName then
         local rd = KG.Ghosts:RouteForHash(run.routeHash)
         local creator = rd and rd.createdBy and rd.createdBy.name
         tip[#tip + 1] = "Route: " .. M.StripColors(run.routeName)
             .. (creator and (" by " .. creator) or "")
-            .. (rd and " — click the route to load into MDT" or "")
+            .. (rd and ". Click the route to copy it for MDT" or "")
     end
     if run.completedAt then tip[#tip + 1] = "Recorded " .. DateShort(run.completedAt) end
     local p = run.player
@@ -170,14 +170,14 @@ local function RowTip(row)
         if cluster then tip[#tip + 1] = cluster end
     end
     if row.hidden then
-        tip[#tip + 1] = "Hidden — parked out of the Ghost Roster and the automatic pick"
+        tip[#tip + 1] = "Hidden: parked out of the Ghost Roster and the automatic pick"
     end
     -- Every pin is DUNGEON-WIDE and per character (Fredrik 2026-07-21: "you
     -- might want to race against your +12 in a +20") — one copy for all rows.
     if row.pinned then
         tip[#tip + 1] = "Click: unpin (back to the automatic pick)"
     else
-        tip[#tip + 1] = string.format("Click: pin — races when you run %s (any key level%s)",
+        tip[#tip + 1] = string.format("Click to pin. Races when you run %s (any key level%s)",
             row.groupName,
             row.hidden and "; this un-hides it"
                 or (row.tier == 0 and "; a Depleted run races only by this pin" or ""))
@@ -187,7 +187,7 @@ end
 
 -- Delete confirms via StaticPopup, naming exactly what dies (the mock's copy).
 StaticPopupDialogs["KEYSTONEGHOST_DELETE"] = {
-    text = "Keystone Ghost — delete %s?|nThis cannot be undone.",
+    text = "Keystone Ghost: delete %s?|nThis cannot be undone.",
     button1 = ACCEPT,
     button2 = CANCEL,
     OnAccept = function(self, data)
@@ -339,18 +339,18 @@ local function AcquireRow(i)
             -- Honest no-op (his silent-click report 2026-07-21): ghosts banked
             -- before the link update carry no URL until a re-sight backfills it.
             print("|cff88ccffKeystoneGhost|r: no raider.io link stored for this ghost yet"
-                .. " — enter its dungeon with RaiderIO loaded and it fills in.")
+                .. ". Enter its dungeon with RaiderIO loaded and it fills in.")
         end
     end)
     row.share.tex:SetVertexColor(Style.GetAccent())
-    row.share.tipText = "Share — copy this ghost's export string"
+    row.share.tipText = "Share: copy this ghost's export string"
     row.share:SetScript("OnClick", function(self)
         local r = self.row
         local str, err = KG.Ghosts:ExportString(r.mapID, r.level, r.charKey, r.tier)
         if str then
             KG.ShowCopy("EXPORT", str)
         else
-            print("|cff88ccffKeystoneGhost|r: export failed — " .. (err or "unknown error"))
+            print("|cff88ccffKeystoneGhost|r: export failed: " .. (err or "unknown error"))
         end
     end)
     -- The eye = HIDE, the reversible cousin of delete (Fredrik 2026-07-22: "be
@@ -572,7 +572,7 @@ local function BuildFrame()
     local online = BarButton(150, "Open my library online",
         { "Open my library online",
             "Copies a link that loads every stored ghost in your browser. Paste it in the address bar.",
-            "Runs you have opened before are not duplicated — new ones fill in." },
+            "Runs you have opened before are not duplicated. New ones fill in." },
         function()
             local url, err, n = KG.Ghosts:ExportLibraryURL()
             if url then
@@ -752,11 +752,11 @@ function Library:Refresh()
             if r.hidden then
                 row.eye.tex:SetVertexColor(Style.GetAccent())
                 row.eye.restAlpha = 0.95
-                row.eye.tipText = "Hidden — click to let it race again"
+                row.eye.tipText = "Hidden: click to let it race again"
             else
                 row.eye.tex:SetVertexColor(0.55, 0.55, 0.58)
                 row.eye.restAlpha = 0.5
-                row.eye.tipText = "Hide — keep this ghost out of the Ghost Roster"
+                row.eye.tipText = "Hide: keep this ghost out of the Ghost Roster"
             end
             row.eye:SetAlpha(row.eye.restAlpha)
             local rioLogo = isRio and Style.RaiderIOLogo() or nil
@@ -809,7 +809,7 @@ function Library:Refresh()
     end
     local tag = KG.db.shareTag
     frame.footer:SetText(tag
-        and ("Your Share Tag: " .. tag .. " — lets receivers group your alts' exports")
+        and ("Your Share Tag: " .. tag .. " (lets receivers group your alts' exports)")
         or "")
     Style.RefreshPanel(frame)
 end

@@ -146,7 +146,7 @@ function R:OnKeyStart()
     -- with a chat note so the change of picture is explained.
     if KG.testMode then
         KG.testMode = false
-        print("|cff88ccffKeystoneGhost|r: test mode off — a real key is starting.")
+        print("|cff88ccffKeystoneGhost|r: test mode off, a real key is starting.")
     end
     KG.Bar.EndIntro() -- a real key outranks the first-login MOVE ME show (no-op otherwise)
     R:AbandonPartySpecSweep() -- a new key outranks last run's spec backfill
@@ -323,7 +323,7 @@ function R:AdoptLiveRun(lr, elapsed)
         print(string.format("|cff88ccffKeystoneGhost|r: resumed racing after reload at %s (timeline restored; the run was already partial and won't be saved).",
             KG.Math.FormatClock(elapsed)))
     else
-        print(string.format("|cff88ccffKeystoneGhost|r: resumed racing after reload at %s — full timeline restored, the run can still be saved as a ghost.",
+        print(string.format("|cff88ccffKeystoneGhost|r: resumed racing after reload at %s. Full timeline restored, the run can still be saved as a ghost.",
             KG.Math.FormatClock(elapsed)))
     end
 end

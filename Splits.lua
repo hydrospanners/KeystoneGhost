@@ -436,7 +436,7 @@ end
 --- Tooltip lines describing where a ghost came from.
 local function RowTip(run, tag)
     local dateFn = date or os.date
-    local tip = { Splits.RowTitle(tag) .. " ghost — " .. M.FormatClock(run.durationSec or 0) }
+    local tip = { Splits.RowTitle(tag) .. " ghost · " .. M.FormatClock(run.durationSec or 0) }
     if run.legacy == "RIO" then
         tip[#tip + 1] = "Converted Raider.IO " .. (run.rioSource or "replay")
     end
@@ -641,7 +641,7 @@ function Splits:Refresh()
         row.bg:SetShown(isRaced)
         row.pin:SetShown(isRaced and st.pinned or false)
         row.tip[#row.tip + 1] = isRaced
-            and (st.pinned and "Pinned — click to unpin (auto-switches resume)"
+            and (st.pinned and "Pinned. Click to unpin (auto-switches resume)"
                 or "Click to pin (blocks auto-switches)")
             or "Click to race this ghost (pins it)"
         if isRaced then

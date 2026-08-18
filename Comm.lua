@@ -136,7 +136,7 @@ function Comm.InsertShareLink(charKey, mapID, level, tier, pretty)
     if not box then return false end
     local marker = Comm.OfferText(charKey, mapID, level, tier, pretty)
     if not marker then
-        print("|cff88ccffKeystoneGhost|r: depleted runs are never shared — the pin is their only door.")
+        print("|cff88ccffKeystoneGhost|r: depleted runs are never shared. The pin is their only door.")
         return true -- shift-click consumed either way
     end
     box:Insert(marker)
@@ -152,7 +152,7 @@ function Comm.SendShare(charKey, mapID, level, tier, pretty)
     local chatType, why = Comm.ResolveShareChannel(KG.db.photoShareChannel,
         IsInGuild(), IsInGroup(LE_PARTY_CATEGORY_INSTANCE), IsInRaid(), IsInGroup())
     if not chatType then
-        print("|cff88ccffKeystoneGhost|r: nothing sent — " .. why
+        print("|cff88ccffKeystoneGhost|r: nothing sent. " .. why
             .. ". The share channel lives in /kg options.")
         return false
     end
@@ -216,11 +216,11 @@ local function OnChunk(token, i, n, part, sender)
     requested[token] = nil
     local run, err = KG.Ghosts:ImportString(table.concat(req.parts))
     if run then
-        print(string.format("|cff88ccffKeystoneGhost|r: imported %s's %s +%d ghost (%s) — racing it next key.",
+        print(string.format("|cff88ccffKeystoneGhost|r: imported %s's %s +%d ghost (%s). Racing it next key.",
             run.importedFrom, M.TierLabel(run.chests), run.level, M.FormatClock(run.durationSec)))
         KG.Library:RefreshIfShown()
     else
-        print("|cff88ccffKeystoneGhost|r: transfer arrived broken — " .. (err or "unknown error"))
+        print("|cff88ccffKeystoneGhost|r: transfer arrived broken: " .. (err or "unknown error"))
     end
 end
 
@@ -235,7 +235,7 @@ if StaticPopupDialogs then -- absent only in the offline test harness
             C_Timer.After(REQUEST_TTL, function()
                 if requested[data.token] then
                     requested[data.token] = nil
-                    print("|cff88ccffKeystoneGhost|r: ghost transfer timed out — ask "
+                    print("|cff88ccffKeystoneGhost|r: ghost transfer timed out. Ask "
                         .. data.sender .. " to send a fresh link.")
                 end
             end)

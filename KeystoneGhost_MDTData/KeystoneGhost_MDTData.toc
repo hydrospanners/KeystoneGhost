@@ -1,0 +1,11 @@
+## Interface: 120100
+## Title: Keystone Ghost - MDT Data Bridge
+## Notes: Demand-loaded bridge to Mythic Dungeon Tools' dungeon data (MDT 6.2+). Does nothing on its own.
+## Author: Hydrospanners
+## Version: 0.14.0
+## Category: Dungeons & Raids
+## LoadOnDemand: 1
+## Dependencies: MythicDungeonTools
+
+Seed.lua
+..\MythicDungeonTools\Midnight\load_midnight.xml

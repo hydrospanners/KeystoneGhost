@@ -2,6 +2,21 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.14.0] - 2026-08-18
+
+- Routes work with Mythic Dungeon Tools 6.2 again. MDT's big update stopped
+  sharing its route data with other addons, which quietly turned off route
+  capture and the pull indicator. Keystone Ghost now reads the data straight
+  from your installed MDT through a small companion module that only loads
+  when you enter a dungeon. It costs nothing the rest of the time, and it
+  can never go out of date against your MDT.
+- Handing a route back into MDT changed shape: MDT 6.2 closed direct imports
+  for every addon, so the route buttons now give you a ready-made MDT import
+  string. Paste it into MDT's Import Preset dialog and you're running the
+  shared route. Keystone Ghost tracks the current MDT only; if your MDT and
+  Keystone Ghost versions ever drift apart, one chat line tells you which
+  side to update.
+
 ## [0.13.1] - 2026-08-14
 
 - Ready for patch 12.1. The patch removed the function that fills in party
@@ -15,19 +30,19 @@ All notable changes to Keystone Ghost are listed here.
 - Finishing a key now ends on a real end screen. Under the finish picture, right
   where the ghost roster sat during the run: your total time with how far under
   (or over) the timer you landed, then you and the two ghosts that finished
-  closest to your time, fastest first — each with key level, chest tier, final
+  closest to your time, fastest first, each with key level, chest tier, final
   time, and how far ahead of it you finished. Ghosts are named the way the
   Ghost Library names them, by the character that recorded them.
 - The finish picture itself got a ceremony: the race track steps aside, a
   checkered flag (the game's own racing flag) plants itself where the finish
   line was, and your character hops beside it. Deplete the key and there is no
-  flag — you get the dizzy wobble instead.
+  flag. You get the dizzy wobble instead.
 - Where the track stood, the run's numbers take over: deaths and the time they
   cost (a deathless run says so in green), enemy forces at the finish with how
   much extra you killed, your best and worst boss against the ghost you raced,
-  and how far away the next chest was — or, on a +3, how much room you had to
+  and how far away the next chest was. On a +3: how much room you had to
   spare.
-- On your own row of the end screen sits a share button — on the row so there
+- On your own row of the end screen sits a share button, on the row so there
   is no doubt which ghost it sends. One click sends your fresh ghost into guild
   chat as a clickable link: guildies with Keystone Ghost click it to race your
   run, everyone else just sees a short line of text. The tooltip says where it
@@ -36,10 +51,10 @@ All notable changes to Keystone Ghost are listed here.
   get the end screen but never the share button.
 - Long route names no longer walk out of the window. When the route-and-pull
   line is too wide, the "Pull #X vs Ghost #Y" part moves to its own row and the
-  bar grows a row to hold it — the track stays put. Short names keep the old
+  bar grows a row to hold it. The track stays put. Short names keep the old
   one-liner.
 - `/kg test` now finishes like a real key: each demo loop ends on the full end
-  screen for five seconds — verdict, stats, flag and all — before the next loop
+  screen for five seconds, verdict, stats, flag and all, before the next loop
   starts. One loop shows a win, the next a loss, so both looks get demoed.
 - Color vision settled down: the palette is read once at login, so the race can
   never change colors mid-key. Picking a different type in the options asks for
@@ -119,22 +134,22 @@ All notable changes to Keystone Ghost are listed here.
 
 - A dungeon with no MDT route raced against the wrong one. MDT gives every
   dungeon you have opened an empty starter route, and the addon took that for a
-  real one — so whatever name was sitting in that slot rode along on the bar with
+  real one, so whatever name was sitting in that slot rode along on the bar with
   nothing behind it, and every pull read as already done. An empty route is no
   route now, and a route filed under another dungeon is refused.
 - `/kg route` no longer hands MDT a route from a different dungeon while you are
   standing in one. Outside a dungeon it still offers your last import.
 - The bar is a little taller so your icon has its own lane above the road. It
   used to share that band with the count number, which is why standing at the
-  end of the road covered it — with a raid marker on your head, completely.
+  end of the road covered it. With a raid marker on your head, completely.
   Should the numbers and the icon still meet (big text, small bar), the numbers
   slide out of the way and glide back when you move on.
 - The pace cars are labelled +3, +2 and +1, just left of each line. Three
   identical hairlines told you nothing about which one was about to pass you.
-- The +1 car drags a red hatched trail behind it — the road it has taken.
+- The +1 car drags a red hatched trail behind it: the road it has taken.
 - New button in the Ghost Library: "Open my library online". It copies a link
   that loads every ghost you have stored into your browser. Ghosts you have
-  opened before won't duplicate — only the new ones fill in. The page it points
+  opened before won't duplicate. Only the new ones fill in. The page it points
   at isn't built yet, so the link goes nowhere for now.
 - The copy popup is a real window now. Same selected-text-and-Ctrl+C, but the
   box fits more than one line, and there's a "Close on copy" tickbox if you'd
@@ -195,41 +210,41 @@ All notable changes to Keystone Ghost are listed here.
 ## [0.9.0] - 2026-07-21
 
 - Ghost Library pins reworked: one selected row per dungeon, per character.
-  A pin now races its dungeon at ANY key level — race your +12 ghost in a
-  +20 — the way the Raider.IO row already worked. Pinning another row moves
+  A pin now races its dungeon at ANY key level: race your +12 ghost in a
+  +20, the way the Raider.IO row already worked. Pinning another row moves
   the selection there, clicking the pinned row unpins it, and two rows can no
   longer sit highlighted in one dungeon. Pins also stopped following the
   ghost's owner around: pinning your main's run while on an alt pins it for
   the alt only. Importing a ghost pins it on the character you imported
-  with — over whatever that character had pinned, the Raider.IO ghost
-  included — so it races your next key. The ghost itself shows in every
+  with, over whatever that character had pinned (the Raider.IO ghost
+  included), so it races your next key. The ghost itself shows in every
   character's Library; the others just don't have it pinned until they pin
-  it. Pins from older versions reset once on this update — re-pin from the
+  it. Pins from older versions reset once on this update. Re-pin from the
   Library.
 - Ghost Library: the Route cell brightens on hover when a route can be
   clicked to load into MDT, so clickable reads as clickable. The row's own
   hover wash and the share/delete buttons' cues are unchanged.
 - The Raider.IO ghost is now a real ghost, not a live mirror: the full replay
   (per-award forces log, boss kills with identity, deaths) is converted into a
-  normal stored run the moment it is seen — skulls sit at their true spots from
+  normal stored run the moment it is seen: skulls sit at their true spots from
   second 0:00, boss laps pair by boss (no more wrong-boss comparisons on a
   different route, the old first-run jank), and the Gap runs on the same math
   as every stored ghost. Clock honest to ±3 s (their timers exclude the death
-  penalty; ours include it — converted and verified).
+  penalty; ours include it, converted and verified).
 - The Ghost Library grows a "Raider.IO" owner: one prefilled ghost per dungeon,
   banked automatically when you enter the dungeon or start a key (their replay
   list is private, so rows appear per dungeon as you play). Pin it to race it
-  on ANY key level of that dungeon — even over your own ghosts; unpinned it is
+  on ANY key level of that dungeon, even over your own ghosts; unpinned it is
   always the LAST pick, only racing when you have no ghost of your own. Delete
   evicts the cache (the row returns next time RaiderIO serves the replay);
   Raider.IO ghosts can't be shared.
 - The Raider.IO ghost also fills the last roster slot when there is room, wears
-  the RaiderIO logo, and can be raced by clicking its row — automatic Overtakes
+  the RaiderIO logo, and can be raced by clicking its row. Automatic Overtakes
   still never target it. Switching replays in RaiderIO's own selector mid-run
   is picked up within ~5 s. If the full replay ever becomes unreadable, the old
-  live mirror still races as a fallback — now with boss-identity laps too.
+  live mirror still races as a fallback, now with boss-identity laps too.
 - Change-driven recording: the recorder now
-  captures on the scenario-criteria events instead of a 2 s clock — every
+  captures on the scenario-criteria events instead of a 2 s clock. Every
   forces change and boss kill lands at its exact second, and timelines are
   step-shaped (flat between changes, exactly how the count actually moves),
   so the Gap inversion never credits a slope that was never played. Deaths
@@ -237,20 +252,20 @@ All notable changes to Keystone Ghost are listed here.
   keeps recording alive even if the game ever stops delivering the events.
 - Stored ghosts and export strings shrink: nodes only where something
   happened, instead of ~900 fixed samples in a 30-minute run. Old ghosts
-  keep racing and importing unchanged — same format, same math.
+  keep racing and importing unchanged: same format, same math.
 - The RaiderIO replay mirror (and its test-mode demo twin) record change-only
-  step nodes too — the replay ghost's moves are no longer smeared up to 2 s.
+  step nodes too. The replay ghost's moves are no longer smeared up to 2 s.
 - The X that closes the post-run summary now matches the Ghost Library's
   close button instead of the default red one.
 - The Ghost Library lists every dungeon of the season, not just the ones you
-  have ghosts for. Empty dungeons say so and tell you how to get one — run
+  have ghosts for. Empty dungeons say so and tell you how to get one: run
   the dungeon, import a ghost, or (with RaiderIO) just walk in and its replay
   is banked for you.
 - The Raider.IO library row shows its pedigree: the RaiderIO logo sits where
   share lives on your own rows, the owner cell names the replay set
   ("Raider.IO · Guild best"), route reads n/a (replays can't carry one), and
   clicking the logo opens a copy window with the raider.io run link. No
-  delete on that row — it's a live mirror of RaiderIO's pick, it would just
+  delete on that row: it's a live mirror of RaiderIO's pick, it would just
   come straight back. The window grew a bit wider for the longer names.
 
 ## [0.8.1]

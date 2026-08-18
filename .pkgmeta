@@ -4,6 +4,12 @@ package-as: KeystoneGhost
 # LibDeflate, LibEditMode) is bundled deliberately — no nolib variant.
 enable-nolib-creation: no
 
+# The MDT data bridge is a separate LoadOnDemand addon folder (it demand-loads
+# MDT's own dungeon files from the user's install — see its Seed.lua). The
+# packager lifts it out of the main folder so the zip installs both.
+move-folders:
+  KeystoneGhost/KeystoneGhost_MDTData: KeystoneGhost_MDTData
+
 # Use the hand-written changelog as the CurseForge file changelog instead of
 # the packager's auto-generated git log (staging commits are just
 # "release: vX.Y.Z", which tells users nothing). The ignore list below still
