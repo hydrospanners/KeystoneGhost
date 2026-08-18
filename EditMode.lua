@@ -38,7 +38,7 @@ local function ColumnSettings()
             kind = NS.LibEditMode.SettingType.Checkbox,
             name = label and label() or ("Column: " .. c.header),
             desc = c.id == "route"
-                and "Show each ghost's MDT route. The widest column — switching it on makes the panel wider than the bar."
+                and "Show each ghost's MDT route. The widest column: switching it on makes the panel wider than the bar."
                 or (c.id == "chest"
                     and "How the key finished: +1 timed, +2 and +3 for the faster thresholds, a red dash for depleted."
                     or ("Show the " .. c.header .. " column in the Ghost Roster.")),
@@ -53,7 +53,7 @@ local function ColumnSettings()
     out[#out + 1] = {
         kind = NS.LibEditMode.SettingType.Checkbox,
         name = "Column: boss laps",
-        desc = "Show the per-boss lap deltas (B1, B2, B3) against every ghost. Three columns wide — switch it off if the panel overhangs a narrow docked timer.",
+        desc = "Show the per-boss lap deltas (B1, B2, B3) against every ghost. Three columns wide, so switch it off if the panel overhangs a narrow docked timer.",
         default = true,
         get = function() return KG.db.colLaps ~= false end,
         set = function(_, value)
@@ -168,7 +168,7 @@ function EM:Setup()
             -- 07-28 wording won, and the laps got a column checkbox of their own.
             kind = LEM.SettingType.Checkbox,
             name = "Display Ghost Roster",
-            desc = "Show the Ghost Roster panel under the bar — every ghost racing you, with its live gap and per-boss laps.",
+            desc = "Show the Ghost Roster panel under the bar: every ghost racing you, with its live gap and per-boss laps.",
             default = true,
             get = function() return KG.db.splits ~= false end,
             set = function(_, value)

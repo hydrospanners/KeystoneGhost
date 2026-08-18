@@ -203,7 +203,7 @@ local function SeedTestSwitch()
         test.ov = nil
         test.attached = nil
         if KG.testMode then -- the intro show runs the same loops, but quietly
-            print("|cff88ccffKeystoneGhost|r: test loop — Raider.IO ghost only (the first-run look).")
+            print("|cff88ccffKeystoneGhost|r: test loop: Raider.IO ghost only (the first-run look).")
         end
     else
         test.rioRef = nil
@@ -212,7 +212,7 @@ local function SeedTestSwitch()
         test.ov = KG.Overtake.New(test.run, false)
         test.attached = test.run
         if KG.testMode then
-            print("|cff88ccffKeystoneGhost|r: test loop — full roster (your real ghosts when stored).")
+            print("|cff88ccffKeystoneGhost|r: test loop: full roster (your real ghosts when stored).")
         end
     end
     test.lastSwitch = nil
@@ -654,8 +654,9 @@ local function Build()
     g3:SetDegrees(6); g3:SetDuration(0.12); g3:SetOrder(3); g3:SetSmoothing("IN_OUT")
     frame.ghostDazed = gDazed
 
-    -- Click the badge: load the raced ghost's embedded route into MDT (confirm
-    -- popup; silent when the ghost carries none — the tooltip says when it does).
+    -- Click the badge: the raced ghost's embedded route as an MDT import string
+    -- in the copy window (silent when the ghost carries none — the tooltip says
+    -- when it does).
     frame.ghostHover:SetScript("OnMouseUp", function(_, button)
         if button == "LeftButton" then Bar.TryLoadRacedRoute() end
     end)
@@ -1640,7 +1641,7 @@ function Bar:Update()
             local lit = Bar._previewRun == run
             f:SetAlpha(lit and 1 or (pinned(rCourse) ~= 0 and 0.3 or 0.55))
             f.tip = {
-                KG.Splits.RowTitle(entry.tag) .. " ghost — " .. M.FormatClock(run.durationSec or 0),
+                KG.Splits.RowTitle(entry.tag) .. " ghost · " .. M.FormatClock(run.durationSec or 0),
                 run.importedFrom and ("From: " .. run.importedFrom) or "One of your runs",
             }
             f:Show()
@@ -1732,7 +1733,7 @@ function Bar:Update()
                     -- its skull at BOTTOM +2), so slot 1 shares the boss lane.
                     mark:SetPoint("BOTTOM", frame.track, "BOTTOMLEFT", x, 2 + SLOTS[slot])
                     mark:SetFrameLevel(frame.track:GetFrameLevel() + 2 + slot)
-                    mark.tip = { string.format("Death #%d — %s", i, M.FormatClock(dt)) }
+                    mark.tip = { string.format("Death #%d · %s", i, M.FormatClock(dt)) }
                     mark:Show()
                 end
             end
@@ -1755,7 +1756,7 @@ function Bar:Update()
                     local mark = Stone(frame.ghostMarks, ng, scale, alpha)
                     mark:SetPoint("TOP", frame.track, "BOTTOMLEFT", px(course), laneY)
                     mark.tip = {
-                        string.format("Ghost's death #%d — %s", i, M.FormatClock(dt)),
+                        string.format("Ghost's death #%d · %s", i, M.FormatClock(dt)),
                         "It stops here to pay the penalty",
                     }
                     mark:Show()
@@ -1886,7 +1887,7 @@ function Bar:Update()
     }
     if ref.kind == "rio" and ref.run and ref.run.legacy == "RIO" then
         table.insert(frame.ghostHover.tip,
-            "Converted Raider.IO " .. (ref.run.rioSource or "replay") .. " — clock honest to ±3 s")
+            "Converted Raider.IO " .. (ref.run.rioSource or "replay") .. ", clock honest to ±3 s")
     end
     if ref.run and ref.run.routeName then
         local line = "Route: " .. ref.run.routeName
@@ -1898,10 +1899,10 @@ function Bar:Update()
         table.insert(frame.ghostHover.tip, line)
         if routeMismatch then
             table.insert(frame.ghostHover.tip,
-                "Different route than your MDT pick — its pull # (*) projects onto yours")
+                "Different route than your MDT pick. Its pull # (*) projects onto yours")
         end
-        if rd and rd.pulls and _G.MDT then
-            table.insert(frame.ghostHover.tip, "Click: load this route into MDT")
+        if rd and rd.pulls then
+            table.insert(frame.ghostHover.tip, "Click: copy this route for MDT import")
         end
     end
     if ref.run and ref.run.importedFrom then
@@ -2079,7 +2080,7 @@ function Bar:ShowSummary(s)
     local L = {}
     -- deaths — a clean run wears the verdict green; a count stays neutral.
     if (st.deaths or 0) == 0 then
-        L[#L + 1] = GRAY_HEX .. "deaths|r   " .. GreenHex() .. "none — deathless|r"
+        L[#L + 1] = GRAY_HEX .. "deaths|r   " .. GreenHex() .. "none (deathless)|r"
     else
         L[#L + 1] = GRAY_HEX .. "deaths|r   " .. st.deaths
             .. ((st.timeLost and st.timeLost > 0)
@@ -2225,7 +2226,7 @@ function Bar:ShowSummary(s)
         frame.shareBtn.tex:SetVertexColor(Style.GetAccent())
         frame.shareBtn:ClearAllPoints()
         frame.shareBtn:SetPoint("RIGHT", youRow, "RIGHT", 0, 0)
-        frame.shareBtn.tipText = "Share — send this ghost to "
+        frame.shareBtn.tipText = "Share: send this ghost to "
             .. (KG.db.photoShareChannel == "group" and "your group" or "guild chat")
         frame.shareBtn:Show()
     else
@@ -2264,7 +2265,7 @@ local function EnsureMoveMe()
     Style.SetFont(m.text, 11)
     m.text:SetPoint("CENTER", -8, 0)
     m.text:SetTextColor(Style.GetAccent())
-    m.text:SetText("Keystone Ghost — drag me into place, then close me")
+    m.text:SetText("Keystone Ghost: drag me into place, then close me")
     -- Dragging moves the BAR (the strip rides it); same save + undock rules as
     -- an Edit Mode drag, minus the chat note — this IS the placement tutorial.
     m:SetScript("OnDragStart", function() frame:StartMoving() end)

@@ -1040,7 +1040,7 @@ local MIGRATIONS = {
             end
             if dropped > 0 then
                 print(string.format("|cff88ccffKeystoneGhost|r: dropped %d ghost(s) from the old"
-                    .. " percent format — the count-space era starts fresh (re-record in play).", dropped))
+                    .. " percent format. The count-space era starts fresh (re-record in play).", dropped))
             end
         end,
     },
@@ -1119,7 +1119,7 @@ function G:DescribeAll()
             for tier = KG.MAX_TIER, 0, -1 do
                 local run = tiers[tier]
                 if run then
-                    out[#out + 1] = string.format("%s +%d — %s (%s)",
+                    out[#out + 1] = string.format("%s +%d · %s (%s)",
                         name or ("map " .. mapID), level, M.TierLabel(tier),
                         M.FormatClock(run.durationSec or 0))
                 end
