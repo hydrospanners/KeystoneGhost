@@ -44,7 +44,7 @@ a clickable link.
 
 ## The Ghost Library
 
-Bare `/kg` (or the minimap ghost) opens it: every stored run from all your
+The minimap ghost opens it: every stored run from all your
 characters, grouped per dungeon. Pin the ghost you want to race next key, share
 or delete per row, hide the ones you never want in the roster. Imports and the
 Raider.IO ghost live here too.
@@ -75,19 +75,16 @@ own Import Preset dialog. Keystone Ghost tracks the current MDT only; if your
 MDT and Keystone Ghost versions ever drift apart, one chat line tells you which
 side to update.
 
-## Commands
+## Where things live
 
-| Command | Effect |
-|---|---|
-| `/kg` | open the Ghost Library |
-| `/kg options` | addon options (display and behavior) |
-| `/kg export [level]` | share your best ghost as a copy/paste string |
-| `/kg import` | paste someone's ghost and race it |
-| `/kg route` | hand the raced or imported ghost's route to MDT |
-| `/kg test` | demo race at 10x speed, no key needed |
+Everything is in the UI. The minimap ghost opens the Ghost Library; sharing,
+importing, pinning, hiding and deleting are buttons in it. Behavior settings
+sit in the standard AddOns options panel, and size and position live in the
+game's Edit Mode, where the bar is a proper system: drag to move, click for
+dock, scale, opacity, and roster settings.
 
-Size and position live in the game's Edit Mode, where the bar is a proper
-system: drag to move, click for dock, scale, opacity, and roster settings.
+Want to see the race without running a key? Type `/kg test` for a demo at
+10x speed.
 
 ## Good to know
 
