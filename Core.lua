@@ -125,13 +125,23 @@ KG.CopyPrompts = {
     EXPORT = { "Copy this ghost's export string:", "export copied." },
     LINK = { "Copy the raider.io run link:", "link copied." },
     LIBRARY = { "Paste this in your browser to open your library online:", "library link copied." },
+    -- The one-way door (2026-08-19). The prompt states the whole contract —
+    -- close commits, ESC backs out — because this is the only warning there
+    -- is; there is no confirm dialog behind it. No copied-message: the window
+    -- says it, chat does not need to say it again. The portal refuses
+    -- retired-season runs (his 2026-08-21 call: current season only, an
+    -- archive is a Season 3 idea), so the prompt must never send people to a
+    -- browser to "keep" these — the saved link IS the backup.
+    LIBRARYCLEAR = { "If you want to store the library, save this link somewhere. Closing this window then deletes last season's ghosts — ESC if not yet:" },
     MDTROUTE = { "Copy this, then paste it in MDT under Import Preset:", "route string copied. Paste it in MDT under Import Preset." },
 }
 
---- Open the copy window for one of the CopyPrompts kinds.
-function KG.ShowCopy(kind, text)
+--- Open the copy window for one of the CopyPrompts kinds. `onCommit` runs once
+--- if the window is closed on purpose (Ctrl+C or ×), `onCancel` if ESC backs
+--- out of it. Both optional; see Copy:Show.
+function KG.ShowCopy(kind, text, onCommit, onCancel)
     local p = KG.CopyPrompts[kind] or KG.CopyPrompts.EXPORT
-    KG.Copy:Show(p[1], text, p[2])
+    KG.Copy:Show(p[1], text, p[2], onCommit, onCancel)
 end
 
 StaticPopupDialogs["KEYSTONEGHOST_IMPORT"] = {
@@ -196,23 +206,12 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         -- Bare /kg opens the Ghost Library (Developer's Q1 yes, 2026-07-21 — the MDT
         -- paradigm at the entry level). The command list moved to /kg help.
         KG.Library:Toggle()
-    elseif cmd == "toggle" or cmd == "hide" or cmd == "show" then
-        if cmd == "toggle" then
-            KG.db.enabled = KG.db.enabled == false
-        else
-            KG.db.enabled = (cmd == "show")
-        end
-        -- The window toggle NEVER stops recording (Developer: "never stop recording") —
-        -- runs keep being captured as future ghosts; only the display hides.
-        Print(KG.db.enabled and "shown." or "hidden (recording continues).")
-        KG.Bar:Refresh()
-        KG.Splits:Refresh()
     elseif cmd == "test" then
         KG.Bar.EndIntro() -- the deliberate demo outranks the first-login show
         KG.testMode = not KG.testMode
         if KG.testMode then KG.Bar.ResetTestLoop() end -- loop 1, fresh DB scan
         Print("test mode " .. (KG.testMode
-            and "ON. Demo race at 10x speed, alternating loops: full roster, then Raider.IO ghost only (the first-run look)."
+            and "ON. Demo run at 15x speed, alternating loops: full roster, then Raider.IO ghost only (the first-run look)."
             or "off."))
         KG.Bar:Refresh()
     elseif cmd == "list" then
@@ -289,9 +288,10 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         -- the sharing trio (export/import/route) left the help — the Ghost
         -- Library covers all three (per-row share, Import button, route-cell
         -- click) plus the chat share. The commands KEEP WORKING undocumented
-        -- for one release, then die. hide/show/toggle, test, list, sharetag
-        -- also work undocumented (dev tier; hide/show/toggle keep-or-cut is
-        -- Developer's call — TASKS #6).
+        -- for one release, then die. test, list, sharetag also work
+        -- undocumented (dev tier). hide/show/toggle are GONE — his W0 call
+        -- (C1, 2026-08-24): the Library eye is the door, the commands died
+        -- with the per-character hiding build.
         Print("commands:")
         print("   /kg - the Ghost Library: browse, pin, share, delete your stored ghosts")
         print("   /kg options - addon options (display + behavior; size & position live in Edit Mode)")

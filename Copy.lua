@@ -59,7 +59,10 @@ local function BuildFrame()
     sep:SetPoint("TOPLEFT", 1, -TITLE_H)
     sep:SetPoint("TOPRIGHT", -3, -TITLE_H)
 
-    local close = Style.CloseButton(title, function() frame:Hide() end)
+    local close = Style.CloseButton(title, function()
+        frame.committing = true -- clicking × is closing on purpose
+        frame:Hide()
+    end)
     close:SetPoint("RIGHT", -8, 0)
 
     frame.prompt = frame:CreateFontString(nil, "OVERLAY")
@@ -80,6 +83,9 @@ local function BuildFrame()
     eb:SetMultiLine(true)
     eb:SetAutoFocus(false)
     Style.SetFont(eb, 11)
+    -- ESC is the way OUT (2026-08-19, his call): it closes WITHOUT committing,
+    -- so a window whose close does something — the season purge — has an
+    -- escape hatch. Deliberate closes are Ctrl+C and the ×, below.
     eb:SetScript("OnEscapePressed", function() frame:Hide() end)
     -- Ctrl+C: the MDT pattern the StaticPopup already used (WoW has no
     -- clipboard-write API — selecting the text IS the copy). Closing after is
@@ -89,7 +95,10 @@ local function BuildFrame()
             if frame.copiedMsg then
                 print("|cff88ccffKeystoneGhost|r: " .. frame.copiedMsg)
             end
-            if KG.db.closeOnCopy ~= false then frame:Hide() end
+            if KG.db.closeOnCopy ~= false then
+                frame.committing = true -- copied and done: the deliberate close
+                frame:Hide()
+            end
         end
     end)
     frame.editBox = eb
@@ -111,17 +120,35 @@ local function BuildFrame()
     frame.hint:SetTextColor(0.43, 0.43, 0.47)
     frame.hint:SetText("Ctrl+C to copy")
 
-    -- Never hold a 24 kB string in a hidden frame.
-    frame:SetScript("OnHide", function() frame.editBox:SetText("") end)
+    -- Never hold a 24 kB string in a hidden frame. The two callbacks fire here
+    -- and here only (2026-08-19): the Library's "Export and delete previous
+    -- season" hangs its delete off CLOSING this window — Ctrl+C or the ×
+    -- commit it, ESC (and anything else that hides the frame) cancels. Both
+    -- are one-shot by construction, cleared before either is called, so a
+    -- callback can never survive into the next copy door.
+    frame:SetScript("OnHide", function()
+        frame.editBox:SetText("")
+        local commit, cancel, committed = frame.onCommit, frame.onCancel, frame.committing
+        frame.onCommit, frame.onCancel, frame.committing = nil, nil, nil
+        if committed then
+            if commit then commit() end
+        elseif cancel then
+            cancel()
+        end
+    end)
 end
 
 --- Show the copy window with `text` selected and ready for Ctrl+C. `prompt` is
 --- the line above the box; `copiedMsg` is printed on copy (nil prints nothing).
-function Copy:Show(prompt, text, copiedMsg)
+--- `onCommit` runs once if the window is closed ON PURPOSE (Ctrl+C, or the ×);
+--- `onCancel` runs once if it goes away any other way, ESC first among them.
+--- Both optional, both one-shot.
+function Copy:Show(prompt, text, copiedMsg, onCommit, onCancel)
     if not frame then BuildFrame() end
     frame:SetScale(KG.db.scale or 1)
     frame.prompt:SetText(prompt or "")
     frame.copiedMsg = copiedMsg
+    frame.onCommit, frame.onCancel, frame.committing = onCommit, onCancel, nil
     frame.check:Refresh()
     frame:Show()
     Style.RefreshPanel(frame)

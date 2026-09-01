@@ -64,7 +64,9 @@ local GreenHex, RedHex = Style.GoodEscape, Style.BadEscape
 local GRAY_HEX = "|cff8c8c8c"
 
 -- ── Test mode: synthetic ghost + simulated player so the bar can be inspected anywhere ──
-local TEST_SPEED = 10 -- 10x: a ~28min run demos in ~3min; 20x made real data look jerky
+local TEST_SPEED = 15 -- 15x (his call 2026-08-25 — "10 feels like waiting"): a ~28min
+                      -- run demos in ~2min; 20x made real data look jerky, so this is
+                      -- the ceiling short of that lesson
 local test = {}
 
 --- Prefer REAL recordings for the test race: the demo follows your FRESHEST dungeon
@@ -322,6 +324,18 @@ local function TestState()
         simDeaths[#simDeaths + 1] = { dT, deaths }
     end
 
+    -- The Rabbit's always-lane previews in `/kg test` too (his 2026-09-01
+    -- catch: flipping the option showed nothing in the demo — but the demo IS
+    -- the no-key preview). Same doors as the live roster (Ghosts:GetRoster's
+    -- rule); a demo run without a mapID or a readable par just means no lane.
+    local function WithDemoRabbit(roster, mapID)
+        if (KG.db.rabbitMode or "auto") == "always" and mapID then
+            local rabbit = KG.Ghosts:RabbitRun(mapID)
+            if rabbit then roster[#roster + 1] = { run = rabbit, tag = "Rabbit" } end
+        end
+        return roster
+    end
+
     -- Even loops race ONLY the Raider.IO ghost (SeedTestSwitch alternates): a
     -- complete converted-style run — full curve, upfront skulls, identity laps —
     -- no Rival, no fillers, no Switch; the bar exactly as a first-run user with
@@ -334,7 +348,7 @@ local function TestState()
             liveRun = test.simRun, -- the sim player's own curve: the Death Markers place on it
             deathCount = deaths, deathTimeLost = deaths * 15, deaths = simDeaths,
             ref = test.rioRef,
-            roster = { { run = test.rioRef.run, tag = "RIO" } },
+            roster = WithDemoRabbit({ { run = test.rioRef.run, tag = "RIO" } }, test.rioRef.run.mapID),
             lastSwitch = nil,
             pinned = false,
         }
@@ -379,7 +393,7 @@ local function TestState()
         liveRun = test.simRun, -- the sim player's own curve: your tombstones place on it
         deathCount = deaths, deathTimeLost = deaths * 15, deaths = simDeaths,
         ref = { kind = "test", label = label, run = raced, durationSec = raced.durationSec },
-        roster = roster,
+        roster = WithDemoRabbit(roster, test.run.mapID),
         lastSwitch = test.lastSwitch,
         pinned = test.ov ~= nil and test.ov.pinned or false,
     }
@@ -767,39 +781,11 @@ local function Build()
     -- Still behind the runtime check (the eye-icon rule): resolves → the
     -- game's flag; a future patch renames it → the drawn pole-and-checker
     -- stands again. Either way a flag renders.
-    local flag = CreateFrame("Frame", nil, frame.photoBoard)
-    flag:SetSize(30, 48)
+    -- One painter for every window since 2026-08-25 (Style.BuildFlag — the
+    -- atlas-or-drawn recipe lived here first; hoisted when the Finish Report
+    -- needed the same flag, #147).
+    local flag = Style.BuildFlag(frame.photoBoard, 30)
     flag:SetPoint("BOTTOMRIGHT", -PAD - 4, 6)
-    if C_Texture and C_Texture.GetAtlasInfo
-        and select(1, pcall(C_Texture.GetAtlasInfo, "worldquest-icon-race"))
-        and C_Texture.GetAtlasInfo("worldquest-icon-race") then
-        local cloth = flag:CreateTexture(nil, "ARTWORK")
-        cloth:SetAtlas("worldquest-icon-race")
-        cloth:SetSize(30, 30)
-        -- Bottom-anchored on his 2026-08-10 call: top-anchored in the 48 px
-        -- frame the flag floated 16 px above the hopping head; now both stand
-        -- on the same baseline (the head's rest pose — the hop leaves it).
-        cloth:SetPoint("BOTTOM", 0, 0)
-    else
-        local pole = flag:CreateTexture(nil, "ARTWORK")
-        pole:SetTexture("Interface\\Buttons\\WHITE8x8")
-        pole:SetVertexColor(0.75, 0.75, 0.78, 1)
-        pole:SetSize(2, 46)
-        pole:SetPoint("BOTTOMLEFT", 0, 0)
-        for r = 0, 5 do
-            for c = 0, 7 do
-                local sq = flag:CreateTexture(nil, "OVERLAY")
-                sq:SetTexture("Interface\\Buttons\\WHITE8x8")
-                sq:SetSize(3, 3)
-                sq:SetPoint("TOPLEFT", 3 + c * 3, -1 - r * 3)
-                if (r + c) % 2 == 0 then
-                    sq:SetVertexColor(0.10, 0.10, 0.12, 1)
-                else
-                    sq:SetVertexColor(0.92, 0.92, 0.94, 1)
-                end
-            end
-        end
-    end
     frame.flag = flag
     -- Mario on the podium: a second portrait beside the flag. Timed key = the
     -- victory hop (the walk-cycle recipe, taller and with a landing beat);
@@ -961,7 +947,74 @@ local function RaiderIOLogo()
     return Style.RaiderIOLogo()
 end
 
+-- ── The Rabbit's face (F5 look; his cute→fearsome ladder, 2026-08-25) ─────────
+-- Real game icons, existence-checked at runtime (the #124 flag recipe: an asset
+-- ships only behind a live check; names verified against the client's icon set
+-- via Wowhead's extracted assets, 2026-08-24). The ladder scales with how hard
+-- the Rabbit pushes — v1 margins use the gentle half; the percentile rabbits
+-- (F7) climb the rest, his calls: p90 wears the polymorph panic, p99 the
+-- Darkmoon Rabbit (the game's own Caerbannog homage). db.rabbitFace overrides.
+local RABBIT_FACES = {
+    spring    = "Interface\\Icons\\inv_rabbit2_spring",
+    classic   = "Interface\\Icons\\inv_misc_rabbit",
+    silver    = "Interface\\Icons\\inv_rabbit2_silver",
+    polymorph = "Interface\\Icons\\spell_magic_polymorphrabbit",
+    darkmoon  = "Interface\\Icons\\inv_rabbit2_darkmoon",
+}
+local FACE_LADDER = { "spring", "classic", "silver", "polymorph", "darkmoon" }
+local rabbitFaceIDs -- [face] = fileID | false, resolved once per session
+local function RabbitFaceID(face)
+    if not rabbitFaceIDs then
+        rabbitFaceIDs = {}
+        local get = rawget(_G, "GetFileIDFromPath")
+        for key, path in pairs(RABBIT_FACES) do
+            rabbitFaceIDs[key] = get and get(path) or false
+        end
+    end
+    return rabbitFaceIDs[face] or false
+end
+local function RabbitIntensity() -- 1..5 on the ladder; margins live on 1-3
+    local m = KG.db.rabbitMargin or 0.90
+    if m >= 0.945 then return 1 end
+    if m >= 0.875 then return 2 end
+    return 3
+end
+local function RabbitFace() -- fileID | nil (nil = watch), plus the face key
+    local pick = KG.db.rabbitFace
+    if pick and pick ~= "auto" and RABBIT_FACES[pick] then
+        local id = RabbitFaceID(pick)
+        if id then return id, pick end
+    end
+    local key = FACE_LADDER[RabbitIntensity()]
+    local id = RabbitFaceID(key)
+    if id then return id, key end
+    id = RabbitFaceID("classic")
+    if id then return id, "classic" end
+    return nil
+end
+Bar.RabbitFaceKey = function() -- the applied-face cache key (options changes repaint)
+    return tostring(KG.db.rabbitFace or "auto") .. "|" .. tostring(KG.db.rabbitMargin or 0.9)
+end
+Bar.RabbitFaceIcon = RabbitFaceID -- (faceKey) → fileID|false; the Options
+-- picker draws each entry's actual face through this door (his 2026-09-01
+-- "pick which rabbit on an icon kind of way")
+
+local ownerMemo = setmetatable({}, { __mode = "k" }) -- [run table] = charKey | false
+
 local function ApplyRunnerIcon(tex, run)
+    tex:SetAlpha(1) -- pooled texture: the Rabbit's fade must not leak to others
+    if run.rabbit then -- the Rabbit's lane runner: its face, a few % faded
+        local id = RabbitFace()
+        if id then
+            tex:SetTexture(id)
+            tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            tex:SetAlpha(0.85)
+            return
+        end
+        tex:SetTexture("Interface\\Icons\\INV_Misc_PocketWatch_01")
+        tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        return
+    end
     if run.legacy == "RIO" then -- the Raider.IO ghost as a roster row/runner
         local logo = RaiderIOLogo()
         if logo then
@@ -975,7 +1028,24 @@ local function ApplyRunnerIcon(tex, run)
         tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         return
     end
-    local token = (run.importedFrom and run.importedFrom:match("%-([^%-]+)$"))
+    -- The run's own class, never the viewer's (#146 follow-up, his Gandalfred
+    -- catch): an import names its exporter in importedFrom; a same-account
+    -- alt's run carries nothing, so ask the store who owns it. MEMOIZED per
+    -- run table (weak keys — council 2026-09-01: the call sites ride the
+    -- 0.1s repaint, and an identity sweep of the whole store per icon per
+    -- tick is not "event-time"). A run's storage identity never changes
+    -- while its table lives; deleted runs stop painting. The viewer's class
+    -- stays the last resort — a run stored nowhere is your own live/demo.
+    local ownerKey = run.importedFrom
+    if not ownerKey then
+        local hit = ownerMemo[run]
+        if hit == nil then
+            hit = KG.Ghosts:FindRunOwner(run) or false
+            ownerMemo[run] = hit
+        end
+        ownerKey = hit or nil
+    end
+    local token = (type(ownerKey) == "string" and ownerKey:match("%-([^%-]+)$"))
         or select(2, UnitClass("player"))
     local coords = token and _G.CLASS_ICON_TCOORDS and _G.CLASS_ICON_TCOORDS[token]
     if coords then
@@ -995,9 +1065,26 @@ Bar.ApplyRunnerIconTo = ApplyRunnerIcon -- (tex, run) — roster rows mirror the
 --- Iteration idea on file: a faded portrait of the ghost's character.)
 local function ApplyGhostIcon(iconTex, ref)
     local key = ref.kind .. "|" .. tostring(ref.run and ref.run.importedFrom or "")
+    if ref.kind == "rabbit" then key = key .. "|" .. Bar.RabbitFaceKey() end
     if iconTex._kgIconKey == key then return end
     iconTex._kgIconKey = key
     iconTex:SetSize(16, 16)
+    iconTex:SetAlpha(1)
+
+    -- The Rabbit wears its face, a few % faded so YOU stay the easy read —
+    -- and the ghost cursor's hover frame is built before the player's, so
+    -- Mario draws on top when they overlap (his order, 2026-08-24).
+    if ref.kind == "rabbit" then
+        local id = RabbitFace()
+        if id then
+            iconTex:SetTexture(id)
+            iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            iconTex:SetVertexColor(1, 1, 1)
+            iconTex:SetAlpha(0.85)
+            return
+        end
+        -- no resolvable face on this client: fall through to the watch below
+    end
 
     local classToken
     if ref.kind == "personal" or ref.kind == "test" then
@@ -2336,9 +2423,27 @@ function Bar:Refresh()
         if frame.cheerJump:IsPlaying() then frame.cheerJump:Stop() end
         if frame.cheerSulk:IsPlaying() then frame.cheerSulk:Stop() end
         frame.photoBoard._for = nil -- …and a re-shown photo repaints/replays
+        -- A new RACE never runs under a lingering report — but Edit Mode is
+        -- placement, not a race (council 2026-09-01: entering it used to eat
+        -- the live report AND its summary, unrecoverably). Only race-shaped
+        -- triggers may close it.
+        if KG.Report and (KG.testMode or KG.introMode
+            or (KG.Recorder:IsActive() and KG.Recorder.currentRef)) then
+            KG.Report:HideLive()
+        end
         Bar:Update()
     elseif KG.Recorder.summary then
-        Bar:ShowSummary(KG.Recorder.summary)
+        -- W3 (his ruling 2026-08-24): a REAL finish closes the bar and opens
+        -- the Finish Report — photo and board retire from this path. The demo
+        -- branch above keeps them: /kg test still ends on the photo hold (the
+        -- gallery retake #98-101 shoots that look), and a window popping every
+        -- loop would read wrong.
+        local s = KG.Recorder.summary
+        if KG.Report and not s._reportShown then
+            s._reportShown = true
+            KG.Report:ShowLive(s)
+        end
+        frame:Hide()
     else
         frame:Hide()
     end

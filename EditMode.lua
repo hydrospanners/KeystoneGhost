@@ -119,6 +119,7 @@ function EM:Setup()
                 KG.db.scale = value
                 KG.Bar.ApplyScale()
                 KG.Library:ApplyScale() -- the Library follows the same slider (2026-07-21)
+                if KG.Report then KG.Report.ApplyScale() end -- and the Finish Report (council 2026-08-25)
             end,
         },
         {

@@ -230,8 +230,11 @@ function Splits.BuildDisplayRows(st)
     for _, entry in ipairs(st.shown or {}) do -- rows this key has already drawn
         -- The rule stops the SYSTEM from taking a row away; the player still can.
         -- Hiding a ghost in the Library (the eye) is exactly that, so a hidden run
-        -- leaves even though it was on screen a moment ago.
-        if not entry.run.hidden and not (lead and entry.run.legacy == "RIO") then
+        -- leaves even though it was on screen a moment ago. Per-character store
+        -- since F9 (2026-08-24); the guard keeps the offline harness (no Ghosts
+        -- module loaded) on the nothing-hidden path.
+        local GH = KG.Ghosts
+        if not (GH and GH:IsRunHidden(entry.run)) and not (lead and entry.run.legacy == "RIO") then
             Add({ run = entry.run, tag = entry.tag, colorIdx = entry.colorIdx })
         end
     end

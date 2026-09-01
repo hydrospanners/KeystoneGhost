@@ -168,6 +168,18 @@ function S:GetParTimeSec(mapID)
     return nil
 end
 
+--- Guarded dungeon icon for a challenge map: the texture fileID Blizzard's
+--- own Mythic+ UI tiles use (4th return of GetMapUIInfo). Nil when
+--- unreadable — callers fall back to text, never to a blank square.
+function S:GetMapTexture(mapID)
+    if not mapID or not C_ChallengeMode.GetMapUIInfo then return nil end
+    local ok, _name, _id, _limit, tex = pcall(C_ChallengeMode.GetMapUIInfo, mapID)
+    if not ok then return nil end
+    tex = readNum(tex)
+    if tex and tex > 0 then return tex end
+    return nil
+end
+
 --- Guarded dungeon name for a challenge map (nil when unreadable).
 function S:GetMapName(mapID)
     if not mapID or not C_ChallengeMode.GetMapUIInfo then return nil end

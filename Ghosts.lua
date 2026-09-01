@@ -31,10 +31,112 @@ local function RunsFor(charKey, mapID, level, create)
     return byLevel and byLevel[level], byLevel
 end
 
+-- ── Hidden Ghosts, PER CHARACTER (F9, his W0 verdict 2026-08-24; was a flag on
+-- the run table since 2026-07-22) ─────────────────────────────────────────────
+-- db.hides[viewerCharKey][key] = true — hiding is one character's view now,
+-- exactly like pins. key addresses the stored run; the Raider.IO row hides
+-- DUNGEON-WIDE (one row per dungeon, and a replay swap changes level/tier — the
+-- old flag-carry block in StoreRioGhost existed for that; the key shape makes
+-- the survival structural instead).
+local HSEP = "\031"
+local hiddenSetCache -- run-table set for this character; dropped by InvalidateRoster
+
+local function HideKey(charKey, mapID, level, tier)
+    if charKey == KG.RIO_CHAR then return charKey .. HSEP .. tostring(mapID) end
+    return table.concat({ charKey, mapID, level, tier }, HSEP)
+end
+
+function G:MyHides(create)
+    local db = KG.db
+    if type(db.hides) ~= "table" then
+        if not create then return nil end
+        db.hides = {}
+    end
+    local me = KG.CharacterKey()
+    local mine = db.hides[me]
+    if type(mine) ~= "table" then
+        if not create then return nil end
+        mine = {}
+        db.hides[me] = mine
+    end
+    return mine
+end
+
+function G:IsHidden(charKey, mapID, level, tier)
+    local mine = G:MyHides()
+    return (mine and mine[HideKey(charKey, mapID, level, tier)]) and true or false
+end
+
+--- The stored-run TABLES this character has hidden — the roster and the Roster
+--- Panel gate on tables, not addresses (their entries carry only the run).
+--- Rebuilt lazily; InvalidateRoster drops it, and every hide/store/delete path
+--- already invalidates.
+function G:HiddenRunSet()
+    if hiddenSetCache then return hiddenSetCache end
+    local set = {}
+    local mine = G:MyHides()
+    if mine and next(mine) then
+        for charKey, maps in pairs(KG.db.runs) do
+            for mapID, byLevel in pairs(maps) do
+                for level, tiers in pairs(byLevel) do
+                    for tier, run in pairs(tiers) do
+                        if type(run) == "table" and mine[HideKey(charKey, mapID, level, tier)] then
+                            set[run] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    hiddenSetCache = set
+    return set
+end
+
+function G:IsRunHidden(run)
+    return G:HiddenRunSet()[run] and true or false
+end
+
+--- A new run landing at an address is born visible for EVERYONE (the old flag
+--- died with the replaced table — same behavior, kept on purpose), and a deleted
+--- run must not leave dangling hides on any character.
+local function ClearHidesAt(charKey, mapID, level, tier)
+    local db = KG.db
+    if type(db.hides) ~= "table" then return end
+    local key = HideKey(charKey, mapID, level, tier)
+    for _, hides in pairs(db.hides) do
+        if type(hides) == "table" then hides[key] = nil end
+    end
+end
+
+-- ── The Rabbit (F5, his W0 verdicts 2026-08-24) ───────────────────────────────
+-- One synthetic linear ghost per (dungeon, margin): the timer with a safety
+-- margin, default 90% (his pick — a wipe's worth of slack; ≈p33 on launch-week
+-- curves, but the margin is time-based on purpose and never drifts). Memoized so
+-- the table is STABLE across roster rebuilds — Splits' rows-never-leave rule
+-- dedups by table identity, and a fresh table each rebuild would double rows.
+local rabbitRuns = {}
+function G:RabbitRun(mapID)
+    if (KG.db.rabbitMode or "auto") == "never" then return nil end
+    local par = S:GetParTimeSec(mapID)
+    if not par then return nil end
+    local dur = math.floor(par * (KG.db.rabbitMargin or 0.90) + 0.5)
+    local key = mapID .. ":" .. dur
+    local run = rabbitRuns[key]
+    if not run then
+        -- `rabbit` marks the synthetic table for the icon doors (never stored,
+        -- never exported — the table lives only in this memo).
+        run = { snapshots = M.LinearSnapshots(dur), durationSec = dur, total = 100, rabbit = true }
+        rabbitRuns[key] = run
+    end
+    return run
+end
+
 function G:Save(run)
     local tiers = select(1, RunsFor(KG.CharacterKey(), run.mapID, run.level, true))
     G:InvalidateRoster()
-    return M.InsertRun(tiers, run)
+    local inserted = M.InsertRun(tiers, run)
+    if inserted then ClearHidesAt(KG.CharacterKey(), run.mapID, run.level, run.chests) end
+    return inserted
 end
 
 -- ── Route Store (route dossier §7): one entry per unique route CONTENT ─────────
@@ -296,12 +398,10 @@ function G:StoreRioGhost(run)
             end
         end
     end
-    -- Hiding survives the replay swap (Hidden Ghosts, 2026-07-22). The flag rides
-    -- the run TABLE, and a new replay replaces that table wholesale — without this
-    -- carry-over the row would un-hide itself every time RaiderIO's pick moves,
-    -- which reads as the setting not sticking.
-    local prev = G:GetStoredRioRun(run.mapID)
-    if prev and prev.hidden then run.hidden = true end
+    -- Hiding survives the replay swap by construction now (F9, 2026-08-24): the
+    -- per-character hide keys the Raider.IO row DUNGEON-WIDE, so the wholesale
+    -- table replacement below can't shake it off. The old flag-carry block died
+    -- with the flag.
     db.runs[KG.RIO_CHAR] = db.runs[KG.RIO_CHAR] or {}
     db.runs[KG.RIO_CHAR][run.mapID] = { [run.level] = { [run.chests] = run } }
     G:InvalidateRoster()
@@ -378,7 +478,7 @@ function G:BuildRioRef(mapID, pinned)
     -- Hidden and not pinned: parked out of the automatic chain, and the live
     -- mirror must not sneak the same replay back in through the side door — the
     -- caller falls through to season best / par.
-    if run and run.hidden and not pinned then return nil end
+    if run and not pinned and G:IsHidden(KG.RIO_CHAR, mapID) then return nil end
     if run then
         return {
             kind = "rio", startPinned = pinned or nil,
@@ -485,7 +585,11 @@ end
 --- sanitized by the codec) is stamped for the future Data-view's alt grouping.
 function G:StoreImport(run, exporter, route, shareTag)
     G:InvalidateRoster()
-    run.importedFrom = exporter
+    -- The ORIGIN wins (his re-share catch 2026-08-30): a re-shared run
+    -- arrives with its runner's charKey already on it — the envelope
+    -- exporter is custody (who sent THIS string), and only fills in on a
+    -- first-hand share where the sender IS the runner.
+    run.importedFrom = run.importedFrom or exporter
     run.importedAt = S:ServerNow() -- server epoch, like every stored timestamp
     run.shareTag = shareTag
     if route and route.hash then
@@ -496,7 +600,11 @@ function G:StoreImport(run, exporter, route, shareTag)
     db.runs[exporter] = db.runs[exporter] or {}
     db.runs[exporter][run.mapID] = db.runs[exporter][run.mapID] or {}
     db.runs[exporter][run.mapID][run.level] = db.runs[exporter][run.mapID][run.level] or {}
-    M.InsertRun(db.runs[exporter][run.mapID][run.level], run)
+    if M.InsertRun(db.runs[exporter][run.mapID][run.level], run) then
+        -- Imports arrive visible (F9, 2026-08-24): a replaced incumbent's hides
+        -- die with it, on every character — the old flag's exact behavior.
+        ClearHidesAt(exporter, run.mapID, run.level, run.chests)
+    end
     local mine = G:MyPicks(true)
     mine[run.mapID] = { char = exporter, level = run.level, tier = run.chests }
     db.lastImported = { char = exporter, mapID = run.mapID, level = run.level }
@@ -507,7 +615,9 @@ end
 --- Delete one stored run (Ghost Library row action). Clears a pick pointing at
 --- exactly this run, prunes emptied tables so iteration stays clean, and GCs
 --- Route Store entries the deletion orphaned. Returns true when something died.
-function G:DeleteRun(charKey, mapID, level, tier)
+--- `skipSweep` (council 2026-09-01): batch deletes pass true and run ONE
+--- SweepRoutes after their loop — per-delete sweeps were O(deleted × store).
+function G:DeleteRun(charKey, mapID, level, tier, skipSweep)
     local db = KG.db
     local byMap = db.runs[charKey]
     local byLevel = byMap and byMap[mapID]
@@ -529,8 +639,12 @@ function G:DeleteRun(charKey, mapID, level, tier)
             mine[mapID] = nil
         end
     end
+    -- Same dangling-state rule for hides (F9, 2026-08-24): a deleted run takes
+    -- every character's hide of it along. For the Raider.IO row that means the
+    -- resurrected cache row comes back visible as well as unpinned.
+    ClearHidesAt(charKey, mapID, level, tier)
     G:InvalidateRoster()
-    G:SweepRoutes()
+    if not skipSweep then G:SweepRoutes() end
     return true
 end
 
@@ -575,10 +689,13 @@ function G:TogglePin(charKey, mapID, level, tier)
     -- so it un-parks the ghost — the same shape as the Depleted loosening, where
     -- an explicit pin overrides a rule the automatic chain still obeys. Un-hiding
     -- on the way IN only; unpinning leaves the ghost visible, not re-hidden.
+    -- Per-character since F9 (2026-08-24): pinning clears MY hide alone — an
+    -- alt's parked view of the same ghost stays parked.
     local function Unhide()
-        local run = G:RunAt(charKey, mapID, level, tier)
-        if run and run.hidden then
-            run.hidden = nil
+        local hides = G:MyHides()
+        local key = hides and HideKey(charKey, mapID, level, tier)
+        if key and hides[key] then
+            hides[key] = nil
             G:InvalidateRoster()
         end
     end
@@ -601,29 +718,33 @@ function G:TogglePin(charKey, mapID, level, tier)
     return true
 end
 
---- Toggle the Hidden flag for a run (the Ghost Library eye, Developer 2026-07-22:
---- "be able to hide Ghost Racers from the Ghost Roster"). Hidden = PARKED: never
---- fills the Ghost Roster, never picked by the automatic reference chain — the
---- Depleted rule's exact shape, including its escape hatch, since an explicit Pin
---- still races it (and un-hides it on the way).
+--- Toggle Hidden for a run (the Ghost Library eye, Developer 2026-07-22: "be able
+--- to hide Ghost Racers from the Ghost Roster"). Hidden = PARKED: never fills
+--- the Ghost Roster, never picked by the automatic reference chain — the
+--- Depleted rule's exact shape, including its escape hatch, since an explicit
+--- Pin still races it (and un-hides it on the way).
 ---
---- The flag lives on the run TABLE, not on the tier slot, so it dies with the
---- ghost: a new personal best replacing a hidden incumbent is a NEW table and is
---- born visible. Account-global by construction (the ghost is hidden, not one
---- character's view of it) — deliberately unlike pins, which are per character.
---- Stripped from exports by the codec; imports arrive visible.
+--- PER CHARACTER since F9 (his W0 verdict 2026-08-24; account-global before):
+--- the hide lives in db.hides[me], pins' shape — you park YOUR view of the
+--- ghost. A new run landing at the address is still born visible for everyone
+--- (ClearHidesAt in the save/import paths keeps the old flag-dies-with-the-
+--- table behavior). Never exported; imports arrive visible.
 ---
---- Refuses on a row THIS character has pinned — the Library gives such rows no eye
---- at all (Developer: "the pinned one cannot be x:ed") and this is the belt-and-
---- suspenders for any other caller. Returns the new hidden state, or nil when the
---- address holds no run.
+--- Refuses on a row THIS character has pinned — the Library gives such rows no
+--- eye at all (Developer: "the pinned one cannot be x:ed") and this is the belt-
+--- and-suspenders for any other caller. Returns the new hidden state, or nil
+--- when the address holds no run.
 function G:ToggleHidden(charKey, mapID, level, tier)
     local run = G:RunAt(charKey, mapID, level, tier)
     if not run then return nil end
-    if G:IsPinned(charKey, mapID, level, tier) then return run.hidden and true or false end
-    run.hidden = (not run.hidden) or nil
+    if G:IsPinned(charKey, mapID, level, tier) then
+        return G:IsHidden(charKey, mapID, level, tier)
+    end
+    local mine = G:MyHides(true)
+    local key = HideKey(charKey, mapID, level, tier)
+    mine[key] = (not mine[key]) or nil
     G:InvalidateRoster()
-    return run.hidden and true or false
+    return mine[key] and true or false
 end
 
 --- Decode + validate + store an export string. Returns the stored run (plus, third,
@@ -785,11 +906,41 @@ function G:ExportLibraryURL(mapID)
     return url, nil, #entries
 end
 
+--- The previous-season selection (Developer 2026-08-19): every stored run that
+--- is not part of the season now running — an older season stamp, or a dungeon
+--- that has rotated out (which is how the Raider.IO cache rows qualify; they
+--- carry no season of their own). Returns the address list + the current
+--- season ID, or nil, err when the season is unreadable:
+--- `C_MythicPlus.GetCurrentSeason` answers -1 until the M+ data loads, and a
+--- bulk delete that fires on an unknown season would be a data-loss bug.
+function G:PreviousSeasonRuns()
+    local season = S and S:GetSeasonID()
+    if not season then
+        return nil, "can't read the current season yet — open the Mythic+ dungeon finder once, then try again"
+    end
+    return M.PreviousSeasonRuns(KG.db.runs, season, S:GetSeasonMapIDs()), nil, season
+end
+
+--- Delete them all → count, or nil, err. One DeleteRun per address, so pins,
+--- emptied tables and orphaned routes are cleaned exactly as a row-by-row
+--- purge would clean them.
+function G:ClearPreviousSeason()
+    local list, err = G:PreviousSeasonRuns()
+    if not list then return nil, err end
+    local n = 0
+    for _, a in ipairs(list) do
+        if G:DeleteRun(a.charKey, a.mapID, a.level, a.tier, true) then n = n + 1 end
+    end
+    if n > 0 then G:SweepRoutes() end -- once, after the loop (council 2026-09-01)
+    return n
+end
+
 --- Build the ghost reference for a live run: this character's pinned ghost
 --- (Library pin / import auto-pick — one per dungeon, races ANY key level;
 --- Developer 2026-07-21: "you might want to race against your +12 in a +20")
 --- → own recorded run (exact level → highest below → lowest above) →
 --- Raider.IO ghost (fresh convert → stored cache → live mirror) → season best
+--- → the Rabbit (par × margin, F5 2026-08-24; "never" skips it) → par
 --- (linear) → par (linear). Every reference carries `snapshots` so the bar and
 --- delta math treat all kinds uniformly. Depleted (tier 0) runs are recorded
 --- but NEVER raced (Developer 2026-07-19) — the +1 sweeper is the deplete
@@ -833,14 +984,19 @@ function G:BuildReference(mapID, level)
         end
     end
 
-    local _, byLevel = RunsFor(KG.CharacterKey(), mapID, level or -1, false)
+    local refKey = KG.CharacterKey()
+    local _, byLevel = RunsFor(refKey, mapID, level or -1, false)
     -- Only levels holding at least one RACEABLE run participate in level fallback, so a
     -- level with nothing but depleted or hidden runs can't shadow a timed run one
-    -- level down (the skipHidden pass, 2026-07-22, extends the depleted rule).
+    -- level down (the skipHidden pass, 2026-07-22, extends the depleted rule;
+    -- per-character predicate since F9, 2026-08-24).
+    local function hiddenAt(lvl)
+        return function(_, tier) return G:IsHidden(refKey, mapID, lvl, tier) end
+    end
     local timedByLevel
     if byLevel then
         for lvl, tiers in pairs(byLevel) do
-            if M.BestRun(tiers, 1, true) then
+            if M.BestRun(tiers, 1, hiddenAt(lvl)) then
                 timedByLevel = timedByLevel or {}
                 timedByLevel[lvl] = tiers
             end
@@ -848,7 +1004,7 @@ function G:BuildReference(mapID, level)
     end
     local tiers, lvlUsed = M.PickLevel(timedByLevel, level)
     if tiers then
-        local run, tier = M.BestRun(tiers, 1, true)
+        local run, tier = M.BestRun(tiers, 1, hiddenAt(lvlUsed))
         if run and run.snapshots then
             return {
                 kind = "personal",
@@ -874,6 +1030,21 @@ function G:BuildReference(mapID, level)
         }
     end
 
+    -- The Rabbit (F5, his W0 verdicts 2026-08-24): the standardized default
+    -- opponent — the timer with a safety margin, a floor with meaning ("am I
+    -- comfortably beating this key?"). Chain position IS the "show when no
+    -- other data is relevant" mode: it answers only when nothing above did.
+    -- "Never" restores the bare par floor below, exactly as before F5.
+    local rabbit = G:RabbitRun(mapID)
+    if rabbit then
+        return {
+            kind = "rabbit",
+            label = "Rabbit (" .. M.FormatClock(rabbit.durationSec) .. ")",
+            run = rabbit,
+            durationSec = rabbit.durationSec,
+        }
+    end
+
     local par = S:GetParTimeSec(mapID)
     if par then
         return {
@@ -892,6 +1063,14 @@ end
 --- finish photo, knockback baseline) treats a switched-onto ghost identically.
 function G:RefForRun(run)
     if not run or not run.snapshots then return nil end
+    if run.rabbit then
+        -- The always-mode Rabbit clicked/switched onto as a roster row must keep
+        -- its identity (council 2026-08-25): label, tag, face and fade all key
+        -- off kind "rabbit" downstream — the personal fallback below would call
+        -- it "Your ?" and dress it in your class icon.
+        return { kind = "rabbit", label = "Rabbit (" .. M.FormatClock(run.durationSec) .. ")",
+            run = run, durationSec = run.durationSec }
+    end
     if run.legacy == "RIO" then
         -- Manual switch-to IS allowed (S12 kept 2026-07-21: autos never target the
         -- Raider.IO ghost, a deliberate row click races it) — and the ref must
@@ -939,12 +1118,14 @@ function G:BuildRoster(mapID, level, wantRoute)
     local target = KG.db.rosterSize or 3
     local out, seen = {}, {}
     local myKey = KG.CharacterKey()
+    local hiddenSet = G:HiddenRunSet() -- this character's parked run tables (F9)
 
     local function add(run, tag)
-        -- `hidden` (the Library eye, 2026-07-22) drops a ghost from the roster at
-        -- the single choke point every priority branch funnels through — including
-        -- the Raider.IO row, which the automatic chain reaches at priority 5.
-        if #out < target and run and run.snapshots and not seen[run] and not run.hidden then
+        -- Hidden (the Library eye, 2026-07-22; per-character set since
+        -- 2026-08-24) drops a ghost from the roster at the single choke point
+        -- every priority branch funnels through — including the Raider.IO row,
+        -- which the automatic chain reaches at priority 5.
+        if #out < target and run and run.snapshots and not seen[run] and not hiddenSet[run] then
             seen[run] = true
             out[#out + 1] = { run = run, tag = tag }
         end
@@ -1006,6 +1187,17 @@ function G:BuildRoster(mapID, level, wantRoute)
     if #out < target then -- 5. the Raider.IO ghost, always last (tier 0 included)
         local rio = G:GetStoredRioRun(mapID)
         if rio then add(rio, "RIO") end
+    end
+
+    -- "Always show" the Rabbit (F5, 2026-08-24): the one optional EXTRA lane —
+    -- outside the rosterSize budget on purpose (the raced-row prepend already
+    -- proves a row beyond the slider works). The auto mode never sits in the
+    -- roster; it IS the reference floor when nothing else answers.
+    if (KG.db.rabbitMode or "auto") == "always" then
+        local rabbit = G:RabbitRun(mapID)
+        if rabbit and not seen[rabbit] then
+            out[#out + 1] = { run = rabbit, tag = "Rabbit" }
+        end
     end
 
     return out
@@ -1097,6 +1289,7 @@ end
 local rosterCache = {}
 function G:InvalidateRoster()
     rosterCache.key = nil
+    hiddenSetCache = nil -- every hide/store/delete path lands here (F9)
 end
 
 function G:GetRoster(mapID, level, wantRoute)

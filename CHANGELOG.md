@@ -2,6 +2,92 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [0.16.0] - 2026-09-01
+
+- The Finish Report grew an action row: share the run straight to your
+  configured channel (the button names it, like "Share to Guild"), copy the
+  export string, or delete the ghost, all without leaving the report.
+- Re-shared ghosts credit the right person now. If a friend passes along a
+  run they imported from someone else, the Ghost Library names the original
+  runner, not the messenger.
+- The Ghost Library tabs show each dungeon's own icon and full name.
+- The whole Ghost Library window drags, same as the Finish Report.
+- A best set since the weekly reset shows its date in white, and its tooltip
+  says which reset it came from. Turn it off with "Mark this reset's bests"
+  in options if you'd rather have the plain date column.
+- The Rabbit face picker shows the actual bunnies, and /kg test now previews
+  the "Always, as an extra lane" setting instead of ignoring it.
+- Fixed an error that could spam while hovering the Ghost Library with a WIM
+  whisper window open.
+- The buttons at the end of a Ghost Library row (hide, report, delete) are
+  spaced further apart, line up with each other properly, and light up as
+  buttons when you hover them.
+- The Finish Report shows the right face now. Opening a stored run from the
+  Ghost Library used to put your own portrait on it no matter who ran it. It
+  now shows the class icon of the character who ran it, or the Raider.IO
+  logo for a replay. A live finish still shows your own portrait.
+- Deaths on the Finish Report's timeline are small tombstones, the same mark
+  the race track uses, staggered so a cluster of deaths reads as separate
+  stones instead of one blob.
+- The Finish Report has its close button back.
+- You can drag the Finish Report from anywhere in the window, not just the
+  title strip.
+- The clock and the score on the Finish Report round the same way Raider.IO
+  does: the clock always rounds down to the second, and the score rounds a
+  half point up instead of down.
+- The magnifier on a Ghost Library row now opens the full Finish Report: the
+  closest ghost, the board, the boss splits and the forces total. Before, it
+  only showed a reduced view with none of that.
+- The Ghost Library shows one dungeon at a time now, in tabs across the top,
+  instead of one long list of every dungeon's ghosts.
+- Click KEY, RESULT, TIME or WHEN at the top of the Ghost Library to sort by
+  that column. Click again to reverse it, a third click goes back to the
+  normal order.
+- The Ghost Library can delete more than one ghost at once. "Select many"
+  turns each row into a checkbox, pick as many as you want across as many
+  dungeons as you want, and delete them all with one confirmation.
+
+## [0.15.0] - 2026-08-25
+
+- Every finished key now ends on the Finish Report: its own window with your
+  time and result, the score, boss-by-boss splits against the ghost, your
+  deaths on a timeline, how far the next chest was, and the ghosts that
+  finished closest to you. The checkered flag and the hop moved in too. The
+  race window closes itself when the report opens. Depleted runs get the
+  report as well, because "the timer was 0:22 away" matters most right then.
+- The report is not just for fresh runs. Every row in the Ghost Library has a
+  small magnifier now that opens that ghost's report.
+- Timed runs show their Raider.IO score on the report, split into base and
+  speed bonus. Built from this season's values; the line hides itself next
+  season until the numbers are refreshed.
+- Meet the Rabbit. When a dungeon has nothing for you to race, a steady
+  rabbit runs at a safe pace under the timer instead of the bare par ghost.
+  Stay ahead of it and the key is comfortably yours. Options let you pick
+  when it shows up, how fast it runs, and which of five bunnies does the
+  running, from the spring bunny to the Darkmoon Rabbit.
+- Hiding a ghost is per character now, like pins. Hiding it on one character
+  no longer hides it for your alts. Old hidden ghosts reset once at login
+  with a chat note; re-hide them from the Library.
+- If a guildie on a newer version shares a ghost with you, one chat line now
+  mentions the update. The paste door always did this; the live share door
+  matches.
+- Route strings from the copy window now import into threechest.io as well
+  as MDT. The web viewer wanted one field MDT does not require.
+- The demo (/kg test) runs at 15x instead of 10x.
+- The /kg hide, show and toggle commands are gone. The Enabled checkbox in
+  Edit Mode is the one switch, and it was already the documented one.
+- New season, clean library. The Ghost Library has one button for the
+  rollover: "Export and delete previous season". It opens the copy window
+  with your whole library, so save the link somewhere if you want to keep
+  it, and closing the window deletes last season's ghosts here. That
+  includes the Raider.IO runs in dungeons that rotated out. ESC leaves
+  everything where it is. The button disappears once there is nothing old
+  left.
+- The Library lists this season's dungeons only. Last season's dungeons and
+  the runs in them are no longer shown.
+- The Share Tag line moved from the bottom of the Ghost Library up to its
+  title bar, next to the close button.
+
 ## [0.14.0] - 2026-08-18
 
 - Routes work with Mythic Dungeon Tools 6.2 again. MDT's big update stopped

@@ -384,7 +384,10 @@ function Codec.ValidatePayload(payload)
         -- crafted string must not write into it or wear its roster identity.
         exporter = "Unknown"
     end
-    local kgv = type(payload.kgv) == "string" and payload.kgv:sub(1, 20) or nil
+    -- Pipe-stripped (council 2026-08-25): kgv reaches chat prints verbatim, and a
+    -- crafted wire value could smuggle |c/|H escapes into them; the digits
+    -- NewerVersion compares survive the strip untouched.
+    local kgv = type(payload.kgv) == "string" and (payload.kgv:gsub("|", "")):sub(1, 20) or nil
     local run = M.CleanRun(UnpackRun(payload.run))
     if not run then return nil, nil, "invalid run data" end
     if not run.mapID or not run.level then return nil, nil, "missing dungeon/level" end

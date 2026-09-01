@@ -262,6 +262,13 @@ function M.CleanRun(raw)
         routeHash = tonumber(raw.routeHash), -- Route Store reference (content hash)
         legacy = type(raw.legacy) == "string" and raw.legacy:sub(1, 12) or nil,
                  -- legacy-grade marker ("KPG1": bosses-only, saturated count)
+        -- The run's ORIGIN charKey (who actually ran it). Re-shares carry it
+        -- on the wire since 2026-08-30 (his re-share catch: the portal and
+        -- the receiver both credited the RE-SHARER) — the envelope exporter
+        -- stays chain-of-custody, this names the runner. Pipe-strip kills
+        -- texture/link escapes; 60 caps a charKey-shaped string.
+        importedFrom = type(raw.importedFrom) == "string"
+            and raw.importedFrom:gsub("|", ""):sub(1, 60) or nil,
         -- Account region token ("EU"/"US"/…) of the party that ran this key — there
         -- is no cross-region play, so one token covers the whole roster. Letters
         -- only, 2-4: it is an enum token that becomes a path segment in a Raider.IO
@@ -539,6 +546,7 @@ function M.RunTag(run, kind)
     return (run.importedFrom and (run.importedFrom:match("^([^%-]+)") or "import"))
         or (run.legacy == "RIO" and "RIO")
         or (kind == "season" and "season") or (kind == "par" and "par")
+        or (kind == "rabbit" and "Rabbit")
         or M.TierLabel(run.chests)
 end
 
@@ -603,14 +611,15 @@ end
 --- Fastest ghost in a tier table. Within one (map, level), a faster time always means an
 --- equal-or-higher tier, so scanning tiers top-down finds the fastest run. Pass
 --- minTier = 1 to skip depleted runs (recorded but never raced — Developer 2026-07-19).
---- `skipHidden` skips Hidden Ghosts (the Library eye, 2026-07-22) — parked ghosts
---- leave the AUTOMATIC chain the way Depleted runs do; an explicit Pin is the one
---- door back, and pinning un-hides.
-function M.BestRun(tiers, minTier, skipHidden)
+--- `skip(run, tier)` excludes candidates — the Hidden Ghosts door (the Library eye,
+--- 2026-07-22; a predicate since 2026-08-24, when hiding moved off the run table
+--- into per-character storage the caller owns). Parked ghosts leave the AUTOMATIC
+--- chain the way Depleted runs do; an explicit Pin is the one door back.
+function M.BestRun(tiers, minTier, skip)
     if type(tiers) ~= "table" then return nil end
     for tier = KG.MAX_TIER, minTier or 0, -1 do
         local run = tiers[tier]
-        if run and not (skipHidden and run.hidden) then return run, tier end
+        if run and not (skip and skip(run, tier)) then return run, tier end
     end
     return nil
 end
@@ -702,6 +711,86 @@ function M.FormatDelta(sec)
     return string.format("%s%d:%02d", sign, math.floor(s / 60), s % 60)
 end
 
+-- ── The Finish Report's pure math (F6, 2026-08-25) ────────────────────────────
+
+--- The run's score under Raider.IO's formula, from a shipped base table
+--- (Data_Score.lua — `{ values = {[level]=base}, maxSampled, perLevelAbove }`).
+--- TIMED runs only: the overtime decay is deliberately unmodeled (unverified),
+--- so an over-par duration returns nil and the caller hides the line. The
+--- speed bonus is 15 × min(1, beatFraction / 0.40) — verified to the decimal
+--- on five live runs (docs/RAIDERIO-KEYSTONE-PACE.md).
+--- @return total, base, bonus — or nil when unanswerable
+function M.ScoreForRun(level, durationSec, parSec, baseTable)
+    if type(baseTable) ~= "table" or type(baseTable.values) ~= "table" then return nil end
+    if not level or not durationSec or not parSec or parSec <= 0 then return nil end
+    if durationSec > parSec then return nil end
+    local base = baseTable.values[level]
+    if not base and baseTable.maxSampled and level > baseTable.maxSampled then
+        base = baseTable.values[baseTable.maxSampled]
+            + (level - baseTable.maxSampled) * (baseTable.perLevelAbove or 0)
+    end
+    if not base then return nil end
+    local bonus = 15 * math.min(1, ((parSec - durationSec) / parSec) / 0.40)
+    return base + bonus, base, bonus
+end
+
+--- Whole resets between a run's `week` stamp (its reset week's END epoch)
+--- and the current one — 0 = set this reset (F3, his yes 2026-08-30).
+--- Nil when either side is missing: old saves and converted rows carry no
+--- stamp and make no claim. Rounded, so server-clock drift of minutes
+--- around the boundary never invents a week.
+function M.ResetAge(week, currentWeekEnd)
+    week, currentWeekEnd = tonumber(week), tonumber(currentWeekEnd)
+    if not week or not currentWeekEnd then return nil end
+    return math.floor((currentWeekEnd - week) / 604800 + 0.5)
+end
+
+--- Raider.IO's display rounding for score values: half UP to one decimal.
+--- `%.1f` alone uses banker's rounding — 332.25 printed 332.2 where their page
+--- says 332.3 (#147, his live catch) — so score displays pre-round through
+--- this and then format. Base is a whole number, so total and bonus rounded
+--- the same way still visibly add up.
+function M.Round1(x)
+    return math.floor(x * 10 + 0.5) / 10
+end
+
+--- The Finish Report's splits table: one row per matched boss — YOUR clock at
+--- the kill vs the ghost's — riding LapDeltasByID's identity matching (journal
+--- IDs first, kill-order fallback, seeded stamps honored by the caller via
+--- LapExtremes' rule upstream). Rows: { idx, mine, ref, delta }; unmatched
+--- ghost bosses are skipped (a row with half a comparison says nothing).
+function M.SplitRows(liveKills, ghostKills, liveIDs, ghostIDs)
+    if type(liveKills) ~= "table" or type(ghostKills) ~= "table" then return {} end
+    local _, matched = M.LapDeltasByID(liveKills, ghostKills, liveIDs, ghostIDs)
+    local rows = {}
+    for i = 1, #ghostKills do
+        local m = matched and matched[i]
+        local mine = m and liveKills[m]
+        if mine and ghostKills[i] then
+            rows[#rows + 1] = { idx = i, mine = mine, ref = ghostKills[i], delta = mine - ghostKills[i] }
+        end
+    end
+    return rows
+end
+
+--- The report's personal-best line over one level's tier table (the store keeps
+--- at most one run per chest tier). `pb` = the fastest TIMED duration present;
+--- `isNewBest` = this run is timed and stands at (or equal to) that front —
+--- the saved run already replaced its slower incumbent by the time the report
+--- reads, so equality IS the new-best case (F4's mark, absorbed here).
+function M.PBLine(tiers, durationSec, chests)
+    if type(tiers) ~= "table" then return nil end
+    local pb
+    for tier = 1, KG.MAX_TIER do
+        local run = tiers[tier]
+        local d = run and tonumber(run.durationSec)
+        if d and (not pb or d < pb) then pb = d end
+    end
+    if not pb then return nil end
+    local timed = (chests or 0) >= 1
+    return { pb = pb, isNewBest = timed and durationSec and durationSec <= pb or false }
+end
+
 --- Forces readout, level form (the count display toggle — DESIGN "Count display
 --- toggle — the Phase 2 proposal", default COUNT per Developer 2026-07-20): one
 --- number, two languages. countMode with a usable total → "228/413" (the raw count
@@ -730,8 +819,11 @@ function M.FormatForcesDelta(pctDiff, total, countMode)
     return string.format("%s%.1f%%", pctDiff >= 0 and "+" or "", pctDiff)
 end
 
+-- Floors, never rounds (#147, 2026-08-28): a 20:12.541 run has not lived its
+-- 13th second, and raider.io's pages floor the same way — so the hero clock,
+-- the Library row, the board and the splits all read the same second.
 function M.FormatClock(sec)
-    local s = math.floor((sec or 0) + 0.5)
+    local s = math.floor(sec or 0)
     return string.format("%d:%02d", math.floor(s / 60), s % 60)
 end
 
@@ -769,12 +861,22 @@ end
 --- pick[mapID] — char + level + tier; Raider.IO rows match on char alone —
 --- is flagged `pinned`. One selected row per dungeon, per character
 --- (Developer 2026-07-21). Rows also carry `hidden` (the Library eye, 2026-07-22).
---- `seasonMapIDs` (optional array) seeds a group for EVERY season dungeon, so
---- dungeons without data still show — with an honest empty state instead of
+--- `seasonMapIDs` (optional array) is THIS SEASON'S dungeon roster, and it
+--- decides the whole group list: a group is seeded for every season dungeon,
+--- so dungeons without data still show with an honest empty state instead of
 --- silently missing (Developer's bug report, 2026-07-21: "I don't see all
---- dungeons"). Empty groups sort by the same name rule.
-function M.LibraryModel(runs, pick, nameFor, seasonMapIDs)
+--- dungeons") — and, since 2026-08-19, runs in dungeons that have ROTATED OUT
+--- are not listed at all. His decision, stated flat: "the old dungeons and old
+--- races don't show in library again. They are gone from view whether you want
+--- or not." They are still stored (the Library's "Export and delete previous
+--- season" button is the door that ends them); this is a view filter.
+--- Passing no roster — the read failed, or the offline tests — keeps the old
+--- behaviour: every dungeon with data shows. A blank window is never the
+--- honest answer to an unreadable roster. Empty groups sort by the same name
+--- rule.
+function M.LibraryModel(runs, pick, nameFor, seasonMapIDs, isHidden, sortSpec)
     local groups, byMap = {}, {}
+    local rosterOnly = seasonMapIDs and #seasonMapIDs > 0 or false
     for _, mapID in ipairs(seasonMapIDs or {}) do
         if not byMap[mapID] then
             local name = nameFor and nameFor(mapID) or nil
@@ -789,46 +891,128 @@ function M.LibraryModel(runs, pick, nameFor, seasonMapIDs)
                 for tier, run in pairs(tiers) do
                     if type(run) == "table" then
                         local g = byMap[mapID]
-                        if not g then
+                        if not g and not rosterOnly then
                             local name = nameFor and nameFor(mapID) or nil
                             g = { mapID = mapID, name = name or ("map " .. tostring(mapID)), rows = {} }
                             byMap[mapID] = g
                             groups[#groups + 1] = g
                         end
                         local pinned
-                        local p = pick and pick[mapID]
+                        local p = g and pick and pick[mapID]
                         if charKey == KG.RIO_CHAR then
                             pinned = (type(p) == "table" and p.char == KG.RIO_CHAR) or false
                         else
                             pinned = (type(p) == "table" and p.char == charKey
                                 and p.level == level and p.tier == tier) or false
                         end
-                        g.rows[#g.rows + 1] = {
+                        if g then g.rows[#g.rows + 1] = {
                             charKey = charKey, mapID = mapID, level = level, tier = tier, run = run,
                             pinned = pinned,
                             -- Hidden Ghosts keep their PLACE in the list (unlike
                             -- Depleted, which sinks): un-hiding is a click on the
-                            -- row you were already looking at, not a hunt.
-                            hidden = run.hidden and true or false,
-                        }
+                            -- row you were already looking at, not a hunt. The
+                            -- verdict comes from the caller's per-character store
+                            -- (isHidden, 2026-08-24), never from the run table.
+                            hidden = (isHidden and isHidden(charKey, mapID, level, tier)) and true or false,
+                        } end
                     end
                 end
             end
         end
     end
     table.sort(groups, function(a, b) return a.name < b.name end)
-    for _, g in ipairs(groups) do
-        table.sort(g.rows, function(a, b)
-            local aDep, bDep = a.tier == 0, b.tier == 0
-            if aDep ~= bDep then return bDep end -- Depleted sink to the group bottom
-            if a.level ~= b.level then return a.level > b.level end
-            if a.tier ~= b.tier then return a.tier > b.tier end
-            local at, bt = a.run.durationSec or 0, b.run.durationSec or 0
-            if at ~= bt then return at < bt end -- full tie: faster run first
-            return tostring(a.charKey) < tostring(b.charKey) -- deterministic order
-        end)
+    local function cmpDefault(a, b)
+        local aDep, bDep = a.tier == 0, b.tier == 0
+        if aDep ~= bDep then return bDep end -- Depleted sink to the group bottom
+        if a.level ~= b.level then return a.level > b.level end
+        if a.tier ~= b.tier then return a.tier > b.tier end
+        local at, bt = a.run.durationSec or 0, b.run.durationSec or 0
+        if at ~= bt then return at < bt end -- full tie: faster run first
+        return tostring(a.charKey) < tostring(b.charKey) -- deterministic order
     end
+    -- An explicit column sort (F10, confirmed 2026-08-25) replaces the whole
+    -- default order — Depleted rows MIX IN rather than sink (sorting by time
+    -- with your depleted attempts in place is the honest timeline); ties fall
+    -- back to the default chain, so equal keys keep the familiar order.
+    local cmp = cmpDefault
+    local VAL = {
+        level = function(r) return r.level or 0 end,
+        tier = function(r) return r.tier or 0 end,
+        time = function(r) return r.run.durationSec or 0 end,
+        date = function(r) return r.run.completedAt or 0 end,
+    }
+    local val = sortSpec and VAL[sortSpec.col]
+    if val then
+        cmp = function(a, b)
+            local av, bv = val(a), val(b)
+            if av ~= bv then
+                if sortSpec.desc then return av > bv end
+                return av < bv
+            end
+            return cmpDefault(a, b)
+        end
+    end
+    for _, g in ipairs(groups) do table.sort(g.rows, cmp) end
     return groups
+end
+
+--- Every stored run that is NOT part of the season now running, as delete
+--- addresses ({ charKey, mapID, level, tier, run }) in a deterministic order
+--- (charKey, mapID, level, tier). Feeds the Ghost Library's "Export and delete
+--- previous season" (Developer 2026-08-19).
+---
+--- Two ways to be old, either one qualifies:
+--- · the run carries a `season` stamp EARLIER than `currentSeason`; or
+--- · its dungeon is not in this season's roster — the whole dungeon rotated
+---   out, so a run in it belongs to a past season no matter what it is
+---   stamped. This is the arm that catches the Raider.IO cache rows, which
+---   carry no season of their own (his live report 2026-08-19: the personal
+---   ghosts cleared, the guild bests in last season's dungeons stayed).
+---
+--- Two refusals, both deliberate — a delete-many must never guess:
+--- · `currentSeason` unreadable (nil / not positive) → nothing at all. The
+---   caller says so out loud instead of clearing on a hunch.
+--- · `seasonMapIDs` empty/absent → the dungeon arm switches OFF entirely
+---   (an unreadable roster would otherwise read as "every dungeon rotated
+---   out"). The season-stamp arm still works.
+---
+--- Raider.IO rows inside the CURRENT roster are kept: they are this season's
+--- guild bests, still raceable, and the cache re-serves them anyway.
+function M.PreviousSeasonRuns(runs, currentSeason, seasonMapIDs)
+    local out = {}
+    currentSeason = tonumber(currentSeason)
+    if not currentSeason or currentSeason <= 0 then return out end
+    local inSeason
+    for _, mapID in ipairs(seasonMapIDs or {}) do
+        inSeason = inSeason or {}
+        inSeason[mapID] = true
+    end
+    local function sortedKeys(t)
+        local keys = {}
+        for k in pairs(t or {}) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        return keys
+    end
+    for _, charKey in ipairs(sortedKeys(runs)) do
+        local byMap = runs[charKey]
+        for _, mapID in ipairs(sortedKeys(byMap)) do
+            local rotatedOut = inSeason and not inSeason[mapID] or false
+            local byLevel = byMap[mapID]
+            for _, level in ipairs(sortedKeys(byLevel)) do
+                local tiers = byLevel[level]
+                for _, tier in ipairs(sortedKeys(tiers)) do
+                    local run = tiers[tier]
+                    local season = type(run) == "table" and tonumber(run.season) or nil
+                    if type(run) == "table"
+                        and (rotatedOut or (season and season < currentSeason)) then
+                        out[#out + 1] = { charKey = charKey, mapID = mapID,
+                            level = level, tier = tier, run = run }
+                    end
+                end
+            end
+        end
+    end
+    return out
 end
 
 --- ── Raider.IO replay conversion (TASKS #13; forensics: docs/RAIDERIO-DATA.md) ──

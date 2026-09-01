@@ -25,13 +25,27 @@ local WIDTH, HEIGHT = 690, 440
 local MIN_H = 240 -- resize floor: chrome + a handful of rows stays a usable window
 local PAD = 12
 local TITLE_H, HEADER_H, GROUP_H, ROW_H, BOTTOM_H = 30, 18, 22, 24, 34
+local TAB_BTN_H = 26 -- one dungeon tab's height (icon + text, his pick 2026-08-30)
 -- Column x-offsets inside a row. Reaction round 2026-07-21 (Developer): the share
 -- button sits FAR LEFT, delete stays FAR RIGHT — the destructive action lives
 -- alone at the opposite edge from everything you'd click routinely. The eye
 -- (2026-07-22) sits a clear 36 px inside delete: same right-hand action cluster,
 -- but delete keeps the edge to itself.
+-- The right-hand cluster (2026-08-29, his "separate the icons a bit… bake small
+-- buttons of them"): three 20x20 BUTTON PLATES on a 24px stride, so 4 px of air
+-- between them instead of the old 2, and a hit area bigger than the glyph.
+-- Before this, each 16px button anchored its texture with SetAllPoints, which
+-- let every texture's own weight decide where it sat — that is what read as
+-- unaligned. Now the PLATE fixes the position and each glyph is centred inside
+-- it, so alignment stops depending on the art. The cluster's right edge keeps
+-- 4 px off the row edge (rows end at -2 inside the content).
+local ACT_SIZE, ACT_STRIDE = 20, 24
+local ACT_INSET = (ACT_SIZE - 16) / 2 -- plate padding around a 16px glyph
+local ACT_RIGHT = 636 -- right edge of the last plate, inside a 640-wide row
 local COL = { SHARE = 0, LVL = 26, TIER = 62, TIME = 116, DATE = 168, ROUTE = 214, OWNER = 400,
-    EYE = 586, DEL = 622 }
+    EYE = ACT_RIGHT - ACT_SIZE - ACT_STRIDE * 2,   -- 568
+    REPORT = ACT_RIGHT - ACT_SIZE - ACT_STRIDE,    -- 592
+    DEL = ACT_RIGHT - ACT_SIZE }                   -- 616
 local OWNER_W, ROUTE_W = COL.EYE - COL.OWNER - 6, COL.OWNER - COL.ROUTE - 8
 
 local GOLD = { 1, 0.82, 0.15 } -- the pin gold (Splits' lock tint)
@@ -51,12 +65,41 @@ local EYE_OFF_ICON = "Interface\\AddOns\\KeystoneGhost\\eye-off-icon.tga"
 
 local frame -- the window; built lazily on first toggle
 
+-- Select-to-delete mode (F12, his spec 2026-08-25 pulled forward 2026-08-29):
+-- runtime-only state — a checkbox column while it lasts, wiped on exit/close.
+Library.selecting = false
+Library.selected = {} -- [SelKey] = delete address { charKey, mapID, level, tier }
+
+local function SelKey(r)
+    return table.concat({ r.charKey, r.mapID, r.level, r.tier }, "|")
+end
+
+function Library.ToggleSelect(r)
+    local key = SelKey(r)
+    if Library.selected[key] then
+        Library.selected[key] = nil
+    else
+        Library.selected[key] = { charKey = r.charKey, mapID = r.mapID, level = r.level, tier = r.tier }
+    end
+    Library:Refresh()
+end
+
+local function SelectedList()
+    local list = {}
+    for _, addr in pairs(Library.selected) do list[#list + 1] = addr end
+    return list
+end
+
 local function DateShort(epoch)
     local dateFn = date or os.date
     if not epoch or not dateFn then return "" end
     local ok, s = pcall(dateFn, "%b %d", epoch)
     return ok and s or ""
 end
+
+-- (TabLabel, the derived-initials shortener, lived here 2026-08-29 →
+-- 2026-08-30: retired by his full-names call after one evening on screen.
+-- Git history has it if abbreviations ever come back.)
 
 --- charKey "Name-Realm-CLASS" → name, realm, classToken (any part may miss).
 local function ParseCharKey(charKey)
@@ -128,6 +171,19 @@ local function RowTip(row)
     end
     if run.deathCount then dur = dur .. string.format(" · %d death%s", run.deathCount, run.deathCount == 1 and "" or "s") end
     tip[#tip + 1] = dur
+    -- F3 (his yes 2026-08-30): which reset this best was set in. Only when
+    -- the stamp exists — old saves, Raider.IO and KPG1 rows carry none and
+    -- make no claim. Same switch as the date tint.
+    if KG.db.resetFresh ~= false then
+        local S = KG.Scenario
+        local we = S and S.WeekEndEpoch and S:WeekEndEpoch()
+        local age = we and M.ResetAge(run.week, we)
+        if age == 0 then
+            tip[#tip + 1] = "Set this reset"
+        elseif age and age > 0 then
+            tip[#tip + 1] = string.format("Set %d reset%s ago", age, age == 1 and "" or "s")
+        end
+    end
     if run.legacy == "KPG1" then
         -- Legacy-grade badge (no brand in-game — the neutral format name only).
         tip[#tip + 1] = "KPG1 ghost code: boss times only, approximate on deathful runs"
@@ -177,7 +233,7 @@ local function RowTip(row)
     if row.pinned then
         tip[#tip + 1] = "Click: unpin (back to the automatic pick)"
     else
-        tip[#tip + 1] = string.format("Click to pin. Races when you run %s (any key level%s)",
+        tip[#tip + 1] = string.format("Click to pin. Runs with you in %s (any key level%s)",
             row.groupName,
             row.hidden and "; this un-hides it"
                 or (row.tier == 0 and "; a Depleted run races only by this pin" or ""))
@@ -193,8 +249,45 @@ StaticPopupDialogs["KEYSTONEGHOST_DELETE"] = {
     OnAccept = function(self, data)
         if KG.Ghosts:DeleteRun(data.charKey, data.mapID, data.level, data.tier) then
             print("|cff88ccffKeystoneGhost|r: ghost deleted.")
+            -- A dying run takes its report AND its select-mode check with it
+            -- (council 2026-09-01: a row-× used to leave both standing on a
+            -- dead address — a stale "Delete (1)" and a report whose Share
+            -- nobody could answer).
+            if KG.Report and KG.Report.OnRunDeleted then
+                KG.Report:OnRunDeleted(data.charKey, data.mapID, data.level, data.tier)
+            end
+            Library.selected[SelKey(data)] = nil
             Library:RefreshIfShown()
         end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- F12: the batch confirm names the COUNT (his spec); the delete walks the
+-- same per-run door the row × uses — DeleteRun sweeps picks and hides per
+-- run, so the batch inherits every single-delete rule. One receipt line.
+StaticPopupDialogs["KEYSTONEGHOST_MULTIDELETE"] = {
+    text = "Keystone Ghost: delete %s?|nThis cannot be undone.",
+    button1 = ACCEPT,
+    button2 = CANCEL,
+    OnAccept = function(self, data)
+        local gone = 0
+        for _, a in ipairs(data) do
+            -- skipSweep: one route sweep after the loop, not one per delete
+            -- (council 2026-09-01: O(deleted × store) in a single click).
+            if KG.Ghosts:DeleteRun(a.charKey, a.mapID, a.level, a.tier, true) then
+                gone = gone + 1
+                if KG.Report and KG.Report.OnRunDeleted then
+                    KG.Report:OnRunDeleted(a.charKey, a.mapID, a.level, a.tier)
+                end
+            end
+        end
+        if gone > 0 then KG.Ghosts:SweepRoutes() end
+        print(string.format("|cff88ccffKeystoneGhost|r: %d ghost%s deleted.",
+            gone, gone == 1 and "" or "s"))
+        Library.selected = {}
+        Library.selecting = false
+        Library:RefreshIfShown()
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
@@ -296,18 +389,42 @@ local function AcquireRow(i)
 
     row.owner = Col(COL.OWNER, OWNER_W, 11)
 
-    local function ActionButton(x, texture)
+    -- A row action = a small button, not a bare icon. The plate is the frame
+    -- (20x20, the thing that aligns and the thing you can hit); the glyph is
+    -- centred inside it at its own optical size. `glyph` sizes art that reads
+    -- heavier than the line-drawn eye — the Blizzard × disc fills its texture
+    -- corner to corner, so at a matching 16 it looks bigger than its
+    -- neighbours. `nudgeY` is the last resort for art that isn't centred
+    -- inside its own file (the search-glass atlas).
+    local function ActionButton(x, texture, opts)
+        opts = opts or {}
         local b = CreateFrame("Button", nil, row)
-        b:SetSize(16, 16)
+        b:SetSize(ACT_SIZE, ACT_SIZE)
         b:SetPoint("LEFT", row, "LEFT", x, 0)
+        -- Invisible at rest — a list of 20 rows must not look like a keypad.
+        -- The fill appears under the cursor, which is the "these are buttons"
+        -- cue his eye was missing (and it stays inside the plate, so the
+        -- cluster's rhythm shows itself the moment you go near it).
+        b.plate = b:CreateTexture(nil, "BACKGROUND")
+        b.plate:SetAllPoints()
+        b.plate:SetColorTexture(1, 1, 1, 0.09)
+        b.plate:Hide()
+        b.glyphSize = opts.glyph or 16
+        b.nudgeY = opts.nudgeY or 0
+        -- The glyph's RESTING anchor, read back by the press handlers — art
+        -- that repositions its texture (the drawn lens) updates these too, or
+        -- the press snap-back would teleport it to the plate center.
+        b.texX, b.texY = 0, b.nudgeY
         b.tex = b:CreateTexture(nil, "ARTWORK")
-        b.tex:SetAllPoints()
+        b.tex:SetSize(b.glyphSize, b.glyphSize)
+        b.tex:SetPoint("CENTER", b.texX, b.texY)
         b.tex:SetTexture(texture)
         b:SetAlpha(0.75)
         -- `restAlpha` lets a stateful button (the eye) carry its own resting
         -- brightness without the hover pair stomping it back to the shared 0.75.
         b:SetScript("OnEnter", function(self)
             self:SetAlpha(1)
+            self.plate:Show()
             if self.tipText then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:SetText(self.tipText, 0.9, 0.9, 0.9)
@@ -316,7 +433,16 @@ local function AcquireRow(i)
         end)
         b:SetScript("OnLeave", function(self)
             self:SetAlpha(self.restAlpha or 0.75)
+            self.plate:Hide()
             GameTooltip:Hide()
+        end)
+        -- Press feedback: the glyph takes a pixel down, the way every button
+        -- in the game does. Cheap, and it's what makes a click feel landed.
+        b:SetScript("OnMouseDown", function(self)
+            self.tex:SetPoint("CENTER", self.texX, self.texY - 1)
+        end)
+        b:SetScript("OnMouseUp", function(self)
+            self.tex:SetPoint("CENTER", self.texX, self.texY)
         end)
         return b
     end
@@ -324,13 +450,17 @@ local function AcquireRow(i)
     -- superseding the brief hourglass stand-in) — a white silhouette with
     -- luminance-alpha, so the accent vertex tint colors it and hover
     -- brightens via the ActionButton alpha.
-    row.share = ActionButton(COL.SHARE, "Interface\\AddOns\\KeystoneGhost\\share-icon.tga")
+    -- Anchored one plate-inset left of COL.SHARE so the GLYPH keeps the exact
+    -- x it has always had: the plate grew around the icon, the icon did not
+    -- move. The far-left slot never had a crowding problem — it gets the
+    -- button treatment only so the whole row presses the same way.
+    row.share = ActionButton(COL.SHARE - ACT_INSET, "Interface\\AddOns\\KeystoneGhost\\share-icon.tga")
     -- The Raider.IO mark in the share slot doubles as the LINK DOOR (his
     -- 2026-07-21 order "clicking it should open the RaiderIO URL in a copy
     -- window"): the logo, click → copy popup with the raider.io run page.
     -- Texture + tooltip set per refresh; a cached ghost without a stored URL
     -- keeps the logo but makes no click claim and the click does nothing.
-    row.rioMark = ActionButton(COL.SHARE, nil)
+    row.rioMark = ActionButton(COL.SHARE - ACT_INSET, nil)
     row.rioMark:SetScript("OnClick", function(self)
         local url = self.row and self.row.run and self.row.run.rioUrl
         if url then
@@ -366,13 +496,75 @@ local function AcquireRow(i)
         Library:Refresh()
     end)
 
-    row.del = ActionButton(COL.DEL, "Interface\\Buttons\\UI-GroupLoot-Pass-Up")
+    -- The förstoringsglas (his word, F6 2026-08-25): any stored ghost reopens
+    -- its Finish Report. Blizzard's own search magnifier when the atlas
+    -- answers (the #124 rule: runtime check, never a blind ship); a drawn
+    -- lens+handle otherwise — a disc from the portrait mask and a rotated
+    -- 2px handle, crisp enough at 16px.
+    -- The atlas art is top-heavy (lens up-left, handle descender), so it reads
+    -- high against the eye. It used to be dragged down 4px with a TOPLEFT/
+    -- BOTTOMRIGHT pair against a 16px button; now it is centred in the plate
+    -- like everything else and carries a 1px optical nudge — the plate does
+    -- the aligning, the nudge only answers the art's own bias. (#152 asked
+    -- whether 4 overshot: from a 20px plate it plainly did.)
+    row.report = ActionButton(COL.REPORT, nil, { nudgeY = -1 })
+    row.report.tipText = "Open this ghost's report"
+    local hasGlassAtlas = C_Texture and C_Texture.GetAtlasInfo
+        and select(1, pcall(C_Texture.GetAtlasInfo, "common-search-magnifyingglass"))
+        and C_Texture.GetAtlasInfo("common-search-magnifyingglass") ~= nil
+    if hasGlassAtlas then
+        row.report.tex:SetAtlas("common-search-magnifyingglass")
+        row.report.tex:SetVertexColor(0.63, 0.63, 0.66)
+    else
+        -- Drawn fallback: a lens disc with a handle off its lower-right. Both
+        -- pieces hang off the plate's CENTER so they travel together and land
+        -- on the same axis as the eye and the ×.
+        row.report.tex:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMaskSmall")
+        row.report.tex:SetSize(10, 10)
+        row.report.tex:ClearAllPoints()
+        row.report.tex:SetPoint("CENTER", -2, 1)
+        row.report.texX, row.report.texY = -2, 1 -- press feedback follows the lens
+        row.report.tex:SetVertexColor(0.63, 0.63, 0.66)
+        local handle = row.report:CreateTexture(nil, "ARTWORK")
+        handle:SetTexture("Interface\\Buttons\\WHITE8x8")
+        handle:SetSize(2, 7)
+        handle:SetPoint("CENTER", 3, -4)
+        handle:SetRotation(-0.785)
+        handle:SetVertexColor(0.63, 0.63, 0.66)
+    end
+    row.report:SetScript("OnClick", function(self)
+        local r = self.row
+        if KG.Report then KG.Report:ShowStored(r.charKey, r.mapID, r.level, r.tier) end
+    end)
+
+    -- The × disc is a filled Blizzard button texture: it paints corner to
+    -- corner, where the eye and the lens are line art with air around them.
+    -- Matched at 16 it read bigger AND heavier than its neighbours — the other
+    -- half of "they look unaligned". 14 inside the same 20px plate puts the
+    -- three glyphs on one optical weight without touching the hit area.
+    row.del = ActionButton(COL.DEL, "Interface\\Buttons\\UI-GroupLoot-Pass-Up", { glyph = 14 })
     row.del.tipText = "Delete this ghost"
     row.del:SetScript("OnClick", function(self)
         local r = self.row
         StaticPopup_Show("KEYSTONEGHOST_DELETE", DeleteLabel(r), nil,
             { charKey = r.charKey, mapID = r.mapID, level = r.level, tier = r.tier })
     end)
+
+    -- The select-mode checkbox (F12): the house CheckBox in the share slot —
+    -- share stands down while selecting, so nothing moves. Reads and writes
+    -- the live selection through the pooled widget's current row.
+    -- Captured as a local, not read back off `row`: Style.CheckBox runs one
+    -- Refresh DURING construction, before `row.check` exists (his live error
+    -- 2026-08-29, first Library open after the wave).
+    local check
+    check = Style.CheckBox(row, "", function()
+        return check and check.row and Library.selected[SelKey(check.row)] ~= nil or false
+    end, function()
+        if check and check.row then Library.ToggleSelect(check.row) end
+    end)
+    row.check = check
+    check:SetPoint("LEFT", row, "LEFT", COL.SHARE + 1, 0)
+    check:Hide()
 
     -- Click ANYWHERE on the row = pin/unpin for its (dungeon, level) — the
     -- roster's own row-click language (Developer 2026-07-21; the pin glyph
@@ -382,6 +574,13 @@ local function AcquireRow(i)
     row:SetScript("OnMouseUp", function(self, button)
         local r = self.row
         if button ~= "LeftButton" or not r then return end
+        -- Select mode (F12): the whole row is the checkbox — pin and share
+        -- wait until the mode ends. Raider.IO mirrors stay unselectable, the
+        -- same rule that keeps their × away.
+        if Library.selecting then
+            if r.charKey ~= KG.RIO_CHAR then Library.ToggleSelect(r) end
+            return
+        end
         if IsShiftKeyDown() and KG.Comm then
             if r.charKey == KG.RIO_CHAR then
                 print("|cff88ccffKeystoneGhost|r: Raider.IO ghosts can't be shared.")
@@ -415,7 +614,7 @@ local function AcquireRow(i)
         GameTooltip:SetText(tip[1])
         for i = 2, #tip do GameTooltip:AddLine(tip[i], 0.9, 0.9, 0.9) end
         if self.row.pinned then
-            GameTooltip:AddLine(string.format("Races when you run %s (any key level)",
+            GameTooltip:AddLine(string.format("Runs with you in %s (any key level)",
                 self.row.groupName), GOLD[1], GOLD[2], GOLD[3])
         end
         GameTooltip:Show()
@@ -435,6 +634,47 @@ local function AcquireRow(i)
 end
 
 -- ── the window ────────────────────────────────────────────────────────────────
+
+--- One dungeon tab (F11), pooled like the rows: the dungeon's own icon (the
+--- art Blizzard's Mythic+ tiles use — everyone knows the picture, whatever
+--- the letters say; his call 2026-08-30) + the short label. Selected wears
+--- the accent border and the icon in full color; the rest sit desaturated
+--- and dim. A client that can't read the icon gets the text-only tab.
+--- Click switches the window to that dungeon and remembers it (db.libTab).
+local function AcquireTab(i)
+    local t = frame.tabPool[i]
+    if t then return t end
+    t = CreateFrame("Button", nil, frame.dungeonTabs, "BackdropTemplate")
+    t:SetHeight(TAB_BTN_H)
+    t:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    t.icon = t:CreateTexture(nil, "ARTWORK")
+    t.icon:SetSize(20, 20)
+    t.icon:SetPoint("LEFT", 3, 0)
+    t.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) -- trim the tile's edge bleed
+    t.text = t:CreateFontString(nil, "OVERLAY")
+    Style.SetFont(t.text, 10)
+    t.text:SetPoint("CENTER")
+    t:SetScript("OnClick", function(self)
+        if self.mapID and KG.db.libTab ~= self.mapID then
+            KG.db.libTab = self.mapID
+            if frame.scroll then frame.scroll:SetVerticalScroll(0) end
+            Library:Refresh()
+        end
+    end)
+    t:SetScript("OnEnter", function(self)
+        self:SetBackdropBorderColor(Style.GetAccent())
+    end)
+    t:SetScript("OnLeave", function(self)
+        if self.selected then
+            self:SetBackdropBorderColor(Style.GetAccent())
+        else
+            self:SetBackdropBorderColor(0.29, 0.29, 0.33, 1)
+        end
+    end)
+    frame.tabPool[i] = t
+    return t
+end
 
 local function BuildFrame()
     frame = CreateFrame("Frame", "KeystoneGhostLibrary", UIParent, "BackdropTemplate")
@@ -458,6 +698,23 @@ local function BuildFrame()
         frame:SetPoint("CENTER")
     end
 
+    -- The whole window drags, the Finish Report's recipe (his 2026-08-30
+    -- yes to "should the library be too?"): any grab no interactive child
+    -- swallows moves it — rows, tabs, buttons, the grip and the scrollbar
+    -- all keep their own clicks, so in practice this is the title, the
+    -- header strip, the bottom bar's gaps and the dead space below short
+    -- lists. One pair of handlers serves frame and title alike.
+    local function StartDrag() frame:StartMoving() end
+    local function StopDrag()
+        frame:StopMovingOrSizing()
+        local point, _, _, x, y = frame:GetPoint()
+        KG.db.libPos = { point = point, x = x, y = y }
+    end
+    frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", StartDrag)
+    frame:SetScript("OnDragStop", StopDrag)
+
     -- Title row: drag handle + close.
     local title = CreateFrame("Frame", nil, frame)
     title:SetPoint("TOPLEFT")
@@ -465,12 +722,8 @@ local function BuildFrame()
     title:SetHeight(TITLE_H)
     title:EnableMouse(true)
     title:RegisterForDrag("LeftButton")
-    title:SetScript("OnDragStart", function() frame:StartMoving() end)
-    title:SetScript("OnDragStop", function()
-        frame:StopMovingOrSizing()
-        local point, _, _, x, y = frame:GetPoint()
-        KG.db.libPos = { point = point, x = x, y = y }
-    end)
+    title:SetScript("OnDragStart", StartDrag)
+    title:SetScript("OnDragStop", StopDrag)
     frame.title = title:CreateFontString(nil, "OVERLAY")
     Style.SetFont(frame.title, 13)
     frame.title:SetPoint("LEFT", PAD, 0)
@@ -485,28 +738,79 @@ local function BuildFrame()
     local close = Style.CloseButton(title, function() frame:Hide() end)
     close:SetPoint("RIGHT", -8, 0)
 
-    -- Column header (the Roster Panel idiom: fixed columns, dim caps).
+    -- The dungeon-tab strip (F11, his 2026-08-25 ask pulled forward
+    -- 2026-08-29: "it's quickly becoming crowded" — one tab per season
+    -- dungeon, the window shows ONE dungeon at a time). Tabs are pooled and
+    -- painted per Refresh, because the roster can change under us. The strip
+    -- WRAPS to more rows when icon+text tabs outgrow the width (his ok
+    -- 2026-08-30: "2 rows of tabs are ok") — its height is set per Refresh,
+    -- and the header + list hang off its bottom, so they follow.
+    frame.dungeonTabs = CreateFrame("Frame", nil, frame)
+    frame.dungeonTabs:SetPoint("TOPLEFT", PAD, -(TITLE_H + 3))
+    frame.dungeonTabs:SetPoint("TOPRIGHT", -PAD, -(TITLE_H + 3))
+    frame.dungeonTabs:SetHeight(TAB_BTN_H)
+    frame.tabPool = {}
+
+    -- Column header (the Roster Panel idiom: fixed columns, dim caps). The
+    -- KEY / RESULT / TIME / WHEN caps also SORT (F10, confirmed 2026-08-25):
+    -- first click = the column's natural read (highest keys / best results /
+    -- fastest / newest first), a second click flips it, a third restores the
+    -- usual order. The active cap wears the accent; the rows themselves are
+    -- the direction indicator (no glyph — fonts can't be trusted with one).
     local header = CreateFrame("Frame", nil, frame)
-    header:SetPoint("TOPLEFT", PAD, -TITLE_H)
-    header:SetPoint("TOPRIGHT", -PAD, -TITLE_H)
+    header:SetPoint("TOPLEFT", frame.dungeonTabs, "BOTTOMLEFT", 0, -3)
+    header:SetPoint("TOPRIGHT", frame.dungeonTabs, "BOTTOMRIGHT", 0, -3)
     header:SetHeight(HEADER_H)
-    local function H(x, text)
+    frame.sortCaps = {}
+    local NATURAL_DESC = { level = true, tier = true, time = false, date = true }
+    local function H(x, text, sortCol)
         local fs = header:CreateFontString(nil, "OVERLAY")
         Style.SetFont(fs, 9)
         fs:SetPoint("LEFT", header, "LEFT", x, 0)
         fs:SetText(text:upper())
         fs:SetAlpha(0.55)
+        if not sortCol then return fs end
+        frame.sortCaps[sortCol] = fs
+        local b = CreateFrame("Button", nil, header)
+        b:SetPoint("LEFT", header, "LEFT", x - 3, 0)
+        b:SetSize(fs:GetStringWidth() + 10, HEADER_H)
+        b:SetScript("OnClick", function()
+            local s = KG.db.libSort
+            if not s or s.col ~= sortCol then
+                KG.db.libSort = { col = sortCol, desc = NATURAL_DESC[sortCol] }
+            elseif s.desc == NATURAL_DESC[sortCol] then
+                s.desc = not s.desc
+            else
+                KG.db.libSort = nil -- third click: the usual order returns
+            end
+            Library:Refresh()
+        end)
+        b:SetScript("OnEnter", function(self)
+            fs:SetAlpha(1)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText("Sort by " .. text:lower())
+            GameTooltip:AddLine("Click again to flip; a third click restores the usual order.",
+                0.9, 0.9, 0.9)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function()
+            local s = KG.db.libSort
+            fs:SetAlpha((s and s.col == sortCol) and 1 or 0.55)
+            GameTooltip:Hide()
+        end)
         return fs
     end
     -- +6: rows sit inset 6 px inside the scroll content — labels align above them.
-    H(COL.LVL + 6, "Key"); H(COL.TIER + 6, "Result"); H(COL.TIME + 6, "Time"); H(COL.DATE + 6, "When")
+    H(COL.LVL + 6, "Key", "level"); H(COL.TIER + 6, "Result", "tier")
+    H(COL.TIME + 6, "Time", "time"); H(COL.DATE + 6, "When", "date")
     H(COL.ROUTE + 6, "Route"); H(COL.OWNER + 6, "Ghost of")
 
-    -- Scrolling list.
+    -- Scrolling list. Hangs off the header, which hangs off the tab strip —
+    -- a two-row strip pushes everything down instead of overlapping it.
     local scroll = CreateFrame("ScrollFrame", "KeystoneGhostLibraryScroll", frame, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", PAD, -(TITLE_H + HEADER_H))
-    scroll:SetPoint("BOTTOMRIGHT", -(PAD + 18), BOTTOM_H) -- 18: scrollbar gutter
-    frame.scroll = scroll -- kept: Refresh parks it on the dungeon you are standing in
+    scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
+    scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -(PAD + 18), BOTTOM_H) -- 18: scrollbar gutter
+    frame.scroll = scroll -- Refresh resets it on tab switches
     frame.content = CreateFrame("Frame", nil, scroll)
     frame.content:SetWidth(WIDTH - PAD * 2 - 18)
     frame.content:SetHeight(1)
@@ -585,9 +889,90 @@ local function BuildFrame()
         end)
     online:SetPoint("LEFT", import, "RIGHT", 8, 0)
 
-    frame.footer = frame:CreateFontString(nil, "OVERLAY")
+    -- Select-to-delete (F12, his spec): a mode button reveals the checkbox
+    -- column; Delete names the count and confirms once. The per-row × stays
+    -- the quick single door. The rollover button steps aside while the mode
+    -- runs — the bar has room for one temporary pair, not two doors at once.
+    local selectBtn = BarButton(104, "Select many…",
+        { "Select many…",
+            "Check any number of ghosts, then delete them in one go.",
+            "Click again to leave without deleting." },
+        function()
+            Library.selecting = not Library.selecting
+            if not Library.selecting then Library.selected = {} end
+            Library:Refresh()
+        end)
+    selectBtn:SetPoint("LEFT", online, "RIGHT", 8, 0)
+    frame.selectBtn = selectBtn
+
+    local deleteSel = BarButton(96, "Delete", nil, function()
+        local list = SelectedList()
+        if #list == 0 then
+            print("|cff88ccffKeystoneGhost|r: nothing checked yet — tick some rows first.")
+            return
+        end
+        StaticPopup_Show("KEYSTONEGHOST_MULTIDELETE",
+            string.format("%d selected ghost%s", #list, #list == 1 and "" or "s"),
+            nil, list)
+    end)
+    deleteSel:SetPoint("LEFT", selectBtn, "RIGHT", 8, 0)
+    deleteSel:Hide()
+    frame.deleteSel = deleteSel
+
+    -- Season rollover, his spec 2026-08-19 after seeing round one live: ONE
+    -- button, one click, no confirm dialog. The copy window IS the confirm —
+    -- it opens with the whole library in it, and CLOSING it is what deletes
+    -- ("so the copy window shows up and when you close the pop up it deletes
+    -- the old runs"), with ESC as the way out ("'not yet' is a better
+    -- solution"). The button retires itself once nothing old is left, because
+    -- it never becomes useful again ("hide the button too").
+    local clear = BarButton(210, "Export and delete previous season",
+        { "Export and delete previous season",
+            "Opens the copy window with your whole library. If you want to store the library, save the link somewhere.",
+            "Closing the window then deletes last season here — rotated-out dungeons and their Raider.IO runs included, no undo. ESC leaves everything alone.",
+            "The button disappears once nothing old is left." },
+        function()
+            local list, err = KG.Ghosts:PreviousSeasonRuns()
+            if not list then
+                print("|cff88ccffKeystoneGhost|r: " .. err)
+                return
+            end
+            if #list == 0 then
+                Library:RefreshIfShown() -- the button was stale; Refresh retires it
+                return
+            end
+            local function purge()
+                local gone, perr = KG.Ghosts:ClearPreviousSeason()
+                -- The ONE line this whole flow prints: a receipt for an
+                -- irreversible delete. Everything else it used to say, the
+                -- window and the vanishing button already say (2026-08-19:
+                -- "stop the chatty messages in chat").
+                print("|cff88ccffKeystoneGhost|r: " .. (gone
+                    and string.format("last season cleared (%d ghost%s).", gone, gone == 1 and "" or "s")
+                    or (perr or "nothing cleared.")))
+                Library:RefreshIfShown()
+            end
+            local url = KG.Ghosts:ExportLibraryURL()
+            if url then
+                KG.ShowCopy("LIBRARYCLEAR", url, purge) -- ESC = no onCancel = nothing happens
+            else
+                -- Nothing exportable left (Raider.IO cache rows only, and those
+                -- were never shareable). No string to save, so the window would
+                -- be an empty ceremony — clear and let the receipt say it.
+                purge()
+            end
+        end)
+    clear:SetPoint("BOTTOMRIGHT", -(PAD + 14), (BOTTOM_H - 22) / 2) -- +14: the grip owns the corner
+    clear:Hide() -- Refresh decides; never flash a door that is already spent
+    frame.clear = clear
+
+    -- The Share Tag line moved OFF the bottom bar and into the title bar
+    -- (2026-08-19): with a tag minted it is a 76-character sentence, and the
+    -- bar just spent its last free pixels on the Clear button. Dim and
+    -- right-aligned it reads as window chrome in either place.
+    frame.footer = title:CreateFontString(nil, "OVERLAY")
     Style.SetFont(frame.footer, 10)
-    frame.footer:SetPoint("BOTTOMRIGHT", -(PAD + 14), (BOTTOM_H - 10) / 2) -- +14: the grip owns the corner
+    frame.footer:SetPoint("RIGHT", -32, 0) -- 32: the close button owns the corner
     frame.footer:SetTextColor(0.43, 0.43, 0.47)
 
     -- Resize grip (his ask 2026-07-30), AutoPullLabeler's Map recipe verbatim —
@@ -621,6 +1006,12 @@ local function BuildFrame()
         Library.scrollToCurrent = true
         Library:Refresh()
     end)
+    -- Closing the window ends select mode and forgets the checks (F12): a
+    -- reopened Library never starts armed for deletion.
+    frame:SetScript("OnHide", function()
+        Library.selecting = false
+        Library.selected = {}
+    end)
 end
 
 --- Rebuild the visible list from the pure model. Pools grow as needed; unused
@@ -631,11 +1022,19 @@ function Library:Refresh()
     -- the current replay. Self-gating outside; only re-refreshes on real change.
     KG.Ghosts:CacheRioOnSight()
     local S = KG.Scenario
-    -- Season roster seeds a group per dungeon (bug report 2026-07-21: dungeons
-    -- without data were invisible); unreadable roster → nil → data-only, as before.
+    -- The season roster IS the group list (2026-08-19): it seeds a group per
+    -- season dungeon (bug report 2026-07-21: dungeons without data were
+    -- invisible) AND bounds it — dungeons that rotated out are not listed,
+    -- whatever they still hold (his decision; the runs live on until the
+    -- bottom bar's Export-and-delete button ends them). Unreadable roster →
+    -- nil → data-only, as before: a blank window is never the honest answer.
     local groups = M.LibraryModel(KG.db.runs, KG.Ghosts:MyPicks(), function(mapID)
         return S:GetMapName(mapID)
-    end, S:GetSeasonMapIDs())
+    end, S:GetSeasonMapIDs(), function(charKey, mapID, level, tier)
+        -- Per-character hides (F9, 2026-08-24) — the model stays pure, the
+        -- store answers through this door.
+        return KG.Ghosts:IsHidden(charKey, mapID, level, tier)
+    end, KG.db.libSort) -- F10: the header caps' column sort, every tab alike
     -- The empty state, shown once under the list when NOTHING is stored anywhere.
     -- The headers already say "no ghosts yet" per dungeon, so this line spends its
     -- words on what to DO about it instead of repeating the news.
@@ -647,11 +1046,96 @@ function Library:Refresh()
     -- is told the action that fills the row, in the words they would use for it.
     local rioTail = type(_G.RaiderIO) == "table" and ", Raider.IO adds one when you walk in" or ""
 
-    local usedG, usedR, y = 0, 0, 0
-    local groupY = {} -- [mapID] = pixel offset of that dungeon's header
+    -- Which tab (F11). Opening the window still parks on the dungeon you are
+    -- standing in — the old scroll-park, morphed into tab selection
+    -- (scrollToCurrent keeps its name and its OnShow contract). Otherwise the
+    -- remembered tab; otherwise the first dungeon.
+    local selected
+    if Library.scrollToCurrent then
+        Library.scrollToCurrent = nil
+        local here = S:GetStagingMapID()
+        for _, g in ipairs(groups) do
+            if g.mapID == here then
+                selected = here
+                if frame.scroll then frame.scroll:SetVerticalScroll(0) end
+                break
+            end
+        end
+    end
+    selected = selected or KG.db.libTab
+    local live = false
     for _, g in ipairs(groups) do
+        if g.mapID == selected then live = true break end
+    end
+    if not live then selected = groups[1] and groups[1].mapID end
+    KG.db.libTab = selected
+
+    -- Paint the tab strip: dungeon icon + label, selected state, full name in
+    -- the tooltip. Tabs WRAP when a row runs out of width (his 2026-08-30 ok)
+    -- and the strip takes the height of however many rows that made — the
+    -- header and list hang off its bottom and follow.
+    local usedT, tx, trow = 0, 0, 1
+    local stripW = WIDTH - PAD * 2
+    for _, g in ipairs(groups) do
+        usedT = usedT + 1
+        local t = AcquireTab(usedT)
+        t.mapID = g.mapID
+        t.selected = g.mapID == selected
+        -- Full names on the tabs (his call 2026-08-30, watching only the
+        -- selected icon read: "having full names might actually be a good
+        -- option"). The derived initials retired; the strip wraps anyway.
+        t.text:SetText(g.name)
+        local tex = g.mapID and S:GetMapTexture(g.mapID) or nil
+        t.text:ClearAllPoints()
+        local w
+        if tex then
+            t.icon:SetTexture(tex)
+            t.icon:Show()
+            t.text:SetPoint("LEFT", t.icon, "RIGHT", 4, 0)
+            w = 3 + 20 + 4 + t.text:GetStringWidth() + 8
+        else
+            t.icon:Hide()
+            t.text:SetPoint("CENTER")
+            w = math.max(34, t.text:GetStringWidth() + 16)
+        end
+        t:SetWidth(w)
+        if tx > 0 and tx + w > stripW then tx, trow = 0, trow + 1 end
+        t:ClearAllPoints()
+        t:SetPoint("TOPLEFT", frame.dungeonTabs, "TOPLEFT", tx, -(trow - 1) * (TAB_BTN_H + 3))
+        -- Icons keep their color on every tab (his 2026-08-30 report: the
+        -- desaturated-and-dimmed resting state read as blank squares — "only
+        -- one tab shows"). Selection is carried by border + text + a slight
+        -- icon dim, not by killing the art.
+        if t.selected then
+            t:SetBackdropColor(0.16, 0.16, 0.20, 0.95)
+            t:SetBackdropBorderColor(Style.GetAccent())
+            t.text:SetTextColor(0.92, 0.92, 0.94)
+            t.icon:SetAlpha(1)
+        else
+            t:SetBackdropColor(0.10, 0.10, 0.13, 0.9)
+            t:SetBackdropBorderColor(0.29, 0.29, 0.33, 1)
+            t.text:SetTextColor(0.63, 0.63, 0.66)
+            t.icon:SetAlpha(0.8)
+        end
+        t.icon:SetDesaturated(false)
+        t:Show()
+        tx = tx + w + 4
+    end
+    for i = usedT + 1, #frame.tabPool do frame.tabPool[i]:Hide() end
+    frame.dungeonTabs:SetHeight(trow * TAB_BTN_H + (trow - 1) * 3)
+
+    -- Render the selected dungeon alone — the group-header line stays as the
+    -- tab body's first row (name · par · count), so no information moved out.
+    -- F3's reset boundary is paint-constant: read once, not per row (council
+    -- 2026-09-01 — WeekEndEpoch is two pcalls a call).
+    local weekEnd = KG.db.resetFresh ~= false and S.WeekEndEpoch and S:WeekEndEpoch() or nil
+    local usedG, usedR, y = 0, 0, 0
+    local g
+    for _, cand in ipairs(groups) do
+        if cand.mapID == selected then g = cand break end
+    end
+    if g then
         usedG = usedG + 1
-        if g.mapID then groupY[g.mapID] = y end
         local h = AcquireGroupHeader(usedG)
         h:SetPoint("TOPLEFT", 0, -y)
         h:SetPoint("TOPRIGHT", 0, -y)
@@ -689,7 +1173,7 @@ function Library:Refresh()
             r.groupName = g.name
             row.row = r
             row.route.row, row.share.row, row.del.row, row.rioMark.row = r, r, r, r
-            row.eye.row = r
+            row.eye.row, row.report.row, row.check.row = r, r, r
             row:SetPoint("TOPLEFT", 6, -y)
             row:SetPoint("TOPRIGHT", -2, -y)
 
@@ -706,7 +1190,17 @@ function Library:Refresh()
             row.time:SetText(M.FormatClock(r.run.durationSec or 0))
             row.time:SetAlpha(a)
             row.date:SetText(DateShort(r.run.completedAt))
-            row.date:SetAlpha(a * 0.8)
+            -- F3 (his yes 2026-08-30): a best SET THIS RESET wears its date
+            -- in text white — the quiet freshness cue; everything older (or
+            -- unstamped) keeps the dim date it always had. One option gates
+            -- this and the tooltip age line together.
+            if weekEnd and M.ResetAge(r.run.week, weekEnd) == 0 then
+                row.date:SetTextColor(0.92, 0.92, 0.94)
+                row.date:SetAlpha(a)
+            else
+                row.date:SetTextColor(1, 1, 1)
+                row.date:SetAlpha(a * 0.8)
+            end
             -- "n/a" on Raider.IO rows (his call 2026-07-21): a replay CANNOT
             -- carry a route, while a plain "—" just reads as absent data.
             local routeName = r.run.routeName and M.Ellipsize(M.StripColors(r.run.routeName), 28)
@@ -739,7 +1233,11 @@ function Library:Refresh()
             -- refresh inside the dungeon, so the X was a lie ("you probably
             -- cant delete it"). The row is a mirror; mirrors have no buttons.
             local isRio = r.charKey == KG.RIO_CHAR
-            row.share:SetShown(not depleted and not isRio)
+            -- Select mode (F12): the checkbox borrows the share slot; mirrors
+            -- (Raider.IO rows) get none — they have no delete door to feed.
+            row.check:SetShown(Library.selecting and not isRio)
+            if row.check:IsShown() then row.check:Refresh() end
+            row.share:SetShown(not Library.selecting and not depleted and not isRio)
             row.del:SetShown(not isRio)
             -- The eye is the ONE control a Raider.IO row gets besides the link:
             -- delete was removed as a lie (the cache re-banks on next sight), but
@@ -763,7 +1261,7 @@ function Library:Refresh()
             if rioLogo then row.rioMark.tex:SetTexture(rioLogo) end
             row.rioMark.tipText = (isRio and r.run.rioUrl)
                 and "Copy the raider.io run link" or nil
-            row.rioMark:SetShown(rioLogo ~= nil)
+            row.rioMark:SetShown(not Library.selecting and rioLogo ~= nil)
             row:Show()
             y = y + ROW_H
         end
@@ -787,26 +1285,49 @@ function Library:Refresh()
         frame.empty:Hide()
     end
     frame.content:SetHeight(math.max(y, 1))
-    -- Open it standing in a dungeon and it opens ON that dungeon (Developer
-    -- 2026-07-29): eight groups deep, the one you are in is the one you want.
-    -- GetStagingMapID answers before the key starts too. The clamp is arithmetic
-    -- rather than GetVerticalScrollRange, which is still stale on the frame the
-    -- content height changed.
-    if Library.scrollToCurrent then
-        Library.scrollToCurrent = nil
-        local mapID = S:GetStagingMapID()
-        local at = mapID and groupY[mapID]
-        if at and frame.scroll then
-            -- The viewport height by construction, in case the frame has not been
-            -- measured yet on the very first open.
-            local viewH = frame.scroll:GetHeight() or 0
-            if viewH <= 0 then
-                viewH = (frame:GetHeight() or HEIGHT) - TITLE_H - HEADER_H - BOTTOM_H
-            end
-            local maxScroll = math.max(0, math.max(y, 1) - viewH)
-            frame.scroll:SetVerticalScroll(math.max(0, math.min(at, maxScroll)))
+    -- (The 2026-07-29 "open on the dungeon you stand in" rule lives on as tab
+    -- selection now — consumed at the top of this function.)
+    -- The one-way door shows only while it has work: nothing from an earlier
+    -- season, no button (Developer 2026-08-19 — "hide the button too, as it will
+    -- not be useful again"). An unreadable season hides it too: a door that
+    -- cannot answer what it would delete should not be clickable.
+    if frame.clear then
+        -- The rollover door steps aside while select mode runs (F12) — and
+        -- so does its FULL-STORE SWEEP (council 2026-09-01: ToggleSelect
+        -- refreshes per checkbox tick; walking every run to decide a hidden
+        -- button's visibility was pure waste).
+        if Library.selecting then
+            frame.clear:Hide()
+        else
+            local old = KG.Ghosts:PreviousSeasonRuns()
+            if old and #old > 0 then frame.clear:Show() else frame.clear:Hide() end
         end
     end
+
+    -- Select mode's buttons (F12): the mode button flips its label, Delete
+    -- shows only while the mode runs and carries the live count.
+    if frame.selectBtn then
+        frame.selectBtn.text:SetText(Library.selecting and "Done selecting" or "Select many…")
+        local n = 0
+        for _ in pairs(Library.selected) do n = n + 1 end
+        frame.deleteSel.text:SetText(n > 0 and ("Delete (" .. n .. ")") or "Delete")
+        frame.deleteSel:SetShown(Library.selecting)
+    end
+
+    -- The sort caps' state: the active column wears the accent (F10).
+    if frame.sortCaps then
+        local s = KG.db.libSort
+        for col, fs in pairs(frame.sortCaps) do
+            if s and s.col == col then
+                fs:SetTextColor(Style.GetAccent())
+                fs:SetAlpha(1)
+            else
+                fs:SetTextColor(1, 1, 1)
+                fs:SetAlpha(0.55)
+            end
+        end
+    end
+
     local tag = KG.db.shareTag
     frame.footer:SetText(tag
         and ("Your Share Tag: " .. tag .. " (lets receivers group your alts' exports)")

@@ -2,7 +2,7 @@
 ## Title: Keystone Ghost
 ## Notes: Race a ghost of your best Mythic+ runs. At-a-glance time and count pace.
 ## Author: Hydrospanners
-## Version: 0.14.0
+## Version: 0.16.0
 ## Category: Dungeons & Raids
 ## X-Curse-Project-ID: 1619149
 ## IconTexture: Interface\AddOns\KeystoneGhost\minimap-icon.tga
@@ -32,6 +32,7 @@ Libs\LibEditMode\widgets\slider.lua
 Libs\LibEditMode\widgets\colorpicker.lua
 
 Init.lua
+Data_Score.lua
 GhostMath.lua
 Overtake.lua
 Codec.lua
@@ -47,5 +48,6 @@ Splits.lua
 EditMode.lua
 Options.lua
 Library.lua
+Report.lua
 Comm.lua
 Core.lua

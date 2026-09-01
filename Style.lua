@@ -245,6 +245,49 @@ function Style.CloseButton(parent, onClick)
     return close
 end
 
+--- The finish flag, ONE painter for every window (hoisted from the photo
+--- 2026-08-25 — the reuse-first principle's first enforcement; the Finish
+--- Report had re-drawn its own and his eye caught the drift, UNTESTED #147).
+--- The game's own skyriding race flag (`worldquest-icon-race`, render-proof by
+--- Blizzard's QuestUtils) behind the runtime atlas check; a future rename
+--- lands on the drawn pole-and-checker again — either way a flag renders.
+--- Cloth bottom-anchored (his 2026-08-10 call: flag and hopper share a
+--- baseline). Returns the flag frame; the caller anchors and shows/hides it.
+function Style.BuildFlag(parent, clothSize)
+    local size = clothSize or 30
+    local flag = CreateFrame("Frame", nil, parent)
+    flag:SetSize(size, math.floor(size * 1.6))
+    if C_Texture and C_Texture.GetAtlasInfo
+        and select(1, pcall(C_Texture.GetAtlasInfo, "worldquest-icon-race"))
+        and C_Texture.GetAtlasInfo("worldquest-icon-race") then
+        local cloth = flag:CreateTexture(nil, "ARTWORK")
+        cloth:SetAtlas("worldquest-icon-race")
+        cloth:SetSize(size, size)
+        cloth:SetPoint("BOTTOM", 0, 0)
+    else
+        local pole = flag:CreateTexture(nil, "ARTWORK")
+        pole:SetTexture("Interface\\Buttons\\WHITE8x8")
+        pole:SetVertexColor(0.75, 0.75, 0.78, 1)
+        pole:SetSize(2, flag:GetHeight() - 2)
+        pole:SetPoint("BOTTOMLEFT", 0, 0)
+        local cell = math.max(2, math.floor(size / 10))
+        for r = 0, 5 do
+            for c = 0, 7 do
+                local sq = flag:CreateTexture(nil, "OVERLAY")
+                sq:SetTexture("Interface\\Buttons\\WHITE8x8")
+                sq:SetSize(cell, cell)
+                sq:SetPoint("TOPLEFT", 3 + c * cell, -1 - r * cell)
+                if (r + c) % 2 == 0 then
+                    sq:SetVertexColor(0.10, 0.10, 0.12, 1)
+                else
+                    sq:SetVertexColor(0.92, 0.92, 0.94, 1)
+                end
+            end
+        end
+    end
+    return flag
+end
+
 --- The house checkbox: a small bordered box with an accent fill when ticked,
 --- plus a label, wearing the Library Import button's chrome. Hand-rolled on
 --- purpose — Blizzard's UICheckButtonTemplate hangs its label off `$parentText`,

@@ -30,6 +30,9 @@ function KG.InitDB()
     if db.splits == nil then db.splits = true end
     if db.attach == nil then db.attach = "ellesmere" end -- docks only when the timer frame exists
     db.rosterSize = db.rosterSize or 3 -- ghost roster rows to aim for (raced + fillers)
+    if db.rabbitMode == nil then db.rabbitMode = "auto" end -- F5 (2026-08-24): auto | always | never
+    db.rabbitMargin = db.rabbitMargin or 0.90 -- the Rabbit's fraction of par (his 90% pick)
+    if db.rabbitFace == nil then db.rabbitFace = "auto" end -- the face ladder (2026-08-25): auto | a face key
     -- Ghost Roster columns, each an Edit Mode checkbox (Developer 2026-07-29:
     -- `x name key chest route time now B(n)`). Route is OFF by default — it is the
     -- wide one, and switching it on makes the panel wider than the bar.
@@ -68,6 +71,36 @@ function KG.InitDB()
     db.pick = nil -- retired 2026-07-21: the account-global [map..":"..level] store —
                   -- per-level keys don't map onto the per-character dungeon-wide
                   -- model, so old pins reset once (re-pin from the Library)
+    db.hides = db.hides or {} -- [viewerCharKey][hideKey] = true — Hidden Ghosts went
+                              -- PER CHARACTER 2026-08-24 (F9, his W0 verdict); pins'
+                              -- shape. hideKey addresses the run (Ghosts.HideKey).
+    -- F9 wipe-once (2026-08-24, the #52 pins precedent — store changed shape, old
+    -- state resets cleanly): strip the retired account-global run.hidden flags.
+    -- Idempotent — after the first pass no flag exists, so the notice fires once.
+    do
+        local cleared = 0
+        for _, maps in pairs(db.runs) do
+            if type(maps) == "table" then
+                for _, byLevel in pairs(maps) do
+                    if type(byLevel) == "table" then
+                        for _, tiers in pairs(byLevel) do
+                            if type(tiers) == "table" then
+                                for _, run in pairs(tiers) do
+                                    if type(run) == "table" and run.hidden then
+                                        run.hidden = nil
+                                        cleared = cleared + 1
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if cleared > 0 then
+            print("|cff88ccffKeystoneGhost|r: hiding is per character now, so old hidden ghosts were reset once. Re-hide from the Ghost Library.")
+        end
+    end
     db.routes = db.routes or {} -- Route Store: [contentHash] = captured route (dossier §7);
                                 -- runs reference via run.routeHash; GC'd by Ghosts:SweepRoutes
     for _, rd in pairs(db.routes) do -- one-time field renames (2026-07-20)

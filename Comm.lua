@@ -203,6 +203,8 @@ end
 
 local requested = {} -- [token] = { from = sender, parts = {}, n = nil, at = GetTime }
 
+local versionNudged -- one nudge per session; a batch of shares should not nag
+
 local function OnChunk(token, i, n, part, sender)
     local req = requested[token]
     if not req or req.from ~= sender then return end -- never asked this player
@@ -214,11 +216,16 @@ local function OnChunk(token, i, n, part, sender)
         if not req.parts[k] then return end -- still incomplete
     end
     requested[token] = nil
-    local run, err = KG.Ghosts:ImportString(table.concat(req.parts))
+    local run, err, newerVersion = KG.Ghosts:ImportString(table.concat(req.parts))
     if run then
         print(string.format("|cff88ccffKeystoneGhost|r: imported %s's %s +%d ghost (%s). Racing it next key.",
             run.importedFrom, M.TierLabel(run.chests), run.level, M.FormatClock(run.durationSec)))
         KG.Library:RefreshIfShown()
+        if newerVersion and not versionNudged then
+            versionNudged = true
+            print(string.format("|cff88ccffKeystoneGhost|r: that ghost was made with v%s and you run v%s. An update is available.",
+                newerVersion, KG.VERSION))
+        end
     else
         print("|cff88ccffKeystoneGhost|r: transfer arrived broken: " .. (err or "unknown error"))
     end

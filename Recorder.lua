@@ -599,14 +599,16 @@ end
 --- pinned pick — those outrank the replay and are already what we want.
 function R:AcquireRioBudgeted(elapsed)
     local ref = R.currentRef
-    if ref and not (ref.kind == "season" or ref.kind == "par" or ref.live) then return end
+    -- The Rabbit counts as a linear fallback here (F5, 2026-08-24): real data
+    -- arriving in Walk-In/Warm-Up outranks it exactly as it outranked par.
+    if ref and not (ref.kind == "season" or ref.kind == "par" or ref.kind == "rabbit" or ref.live) then return end
     if not RioAcquireDue(elapsed) then return end
     local newRef = rec.mapID and KG.Ghosts:BuildReference(rec.mapID, rec.level)
     if not newRef then return end
     -- Take a FULL convert always (may be a mirror→full upgrade); take the mirror itself
     -- only from a linear fallback (never re-take a fresh mirror over the one we run).
     local take = newRef.kind == "rio"
-        or (newRef.live and (not ref or ref.kind == "season" or ref.kind == "par"))
+        or (newRef.live and (not ref or ref.kind == "season" or ref.kind == "par" or ref.kind == "rabbit"))
     if take and newRef.run and newRef.run ~= (ref and ref.run or nil) then
         -- This is the ONLY place the reference swaps by itself now, so it is also where
         -- the sticky-row rule is honoured: the newcomer inherits the outgoing ghost's
@@ -697,6 +699,15 @@ function R:OnKeyEnd()
         ref = ref, -- Bar:ShowSummary draws the finish photo from this
         level = level,
         par = saved.parTimeSec, -- the End Screen's over/under-the-timer line
+        -- The Finish Report's raw pieces (F6, 2026-08-25): the death timeline,
+        -- the boss-kill stamps for the splits table, and the honesty context
+        -- (seeded stamps lie, a partial run's laps never render).
+        mapID = saved.mapID,
+        deaths = saved.deaths,
+        bossKills = saved.bossKills,
+        bossIDs = saved.bossIDs,
+        seededKills = saved.seededKills,
+        partial = saved.partial,
     }
     -- The End Screen's neighbor rows (his sketch 2026-08-07): the two ghosts
     -- that finished closest to your clock, either side, from the rows this key
@@ -772,6 +783,7 @@ function R:OnKeyEnd()
         KG.Ghosts:StoreRoute(saved.route) -- the run's route as it was AT KEY START
     end
     if stored then
+        R.summary.stored = true -- the report's NEW-PB claim needs a landed save (council 2026-08-25)
         print(string.format("|cff88ccffKeystoneGhost|r: run saved as %s ghost (+%d, %s).",
             KG.Math.TierLabel(chests), level, KG.Math.FormatClock(durationSec)))
         R:StartPartySpecSweep()

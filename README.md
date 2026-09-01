@@ -37,17 +37,44 @@ the first boss twelve seconds faster). A ghost that overtakes you and holds it
 becomes the raced ghost on its own; click any row to race that one instead and
 pin it.
 
-Finish a timed key and the end screen takes over: your time against the timer,
-the two ghosts that finished closest to you, the run's numbers, a checkered
-flag, and a share button that posts your fresh ghost to guild or group chat as
-a clickable link.
+Cross the finish line and the bar hands over to the Finish Report.
+
+## The Finish Report
+
+Every finish opens a report window, timed or depleted: your clock against the
+timer, how far the next chest was, and on timed runs a score line that
+matches what raider.io will say about the run. Below that, the race you just
+ran: the finish gap against the ghost you raced, a small board with the
+ghosts that finished closest to your clock, and a splits table with every
+boss, your time next to the ghost's, the difference in green or red. Deaths
+get a count, the time they cost, and a timeline strip with a skull per death.
+A new personal best at that key level says so. Timed runs celebrate with a
+checkered flag and your portrait hopping beside it, and a share button posts
+the fresh ghost to guild or group chat as a clickable link.
+
+Stored ghosts keep their reports too: the magnifier on any Ghost Library row
+reopens one, compared against the closest other ghost you have for that
+dungeon.
+
+## The Rabbit
+
+The Rabbit is the opponent when nothing else is: a steady runner that
+finishes safely under the timer, so a fresh alt or a dungeon you never ran
+still has something to beat. It steps aside as soon as real data exists.
+Options let it always run as an extra lane, or never, and its pace has three
+settings from gentle to brisk. It wears an actual rabbit's face, and the
+brisker the pace, the less cute the rabbit.
 
 ## The Ghost Library
 
-The minimap ghost opens it: every stored run from all your
-characters, grouped per dungeon. Pin the ghost you want to race next key, share
-or delete per row, hide the ones you never want in the roster. Imports and the
-Raider.IO ghost live here too.
+The minimap ghost opens it: every stored run from all your characters, one
+tab per dungeon. Sort the rows by key, result, time, or date by clicking the
+column headers. Pin the ghost you want to race next key, share or delete per
+row, hide the ones you never want in the roster (hiding is per character, so
+your alts keep their own view), and open any ghost's report with the
+magnifier. The Select many button checks any number of runs and deletes them
+with one confirm. Imports and the Raider.IO ghost live here too, and Open my
+library online shows the whole collection in your browser.
 
 ## Sharing
 
@@ -64,7 +91,8 @@ identity attached.
 1. Imported ghosts.
 2. Your own recorded runs (one slot per chest tier per character, dungeon, and level).
 3. The Raider.IO replay, converted into a full ghost when you enter the dungeon (optional, needs RaiderIO).
-4. Season best and par pace, so the bar is useful from day one.
+4. The season best time the game knows for you.
+5. The Rabbit, so the bar is useful from day one (plain par pace if you turned the Rabbit off).
 
 ## MDT
 
@@ -84,7 +112,7 @@ game's Edit Mode, where the bar is a proper system: drag to move, click for
 dock, scale, opacity, and roster settings.
 
 Want to see the race without running a key? Type `/kg test` for a demo at
-10x speed.
+15x speed.
 
 ## Good to know
 

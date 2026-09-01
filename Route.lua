@@ -249,7 +249,7 @@ local modernMDT -- session cache, set only on a fully successful resolve
 --- "External addon interfaces"). Patch drift is deliberately silent: MDT
 --- patches are data fixes, and our data reads their live files, so it cannot
 --- go stale.
-local MDT_BUILT_FOR = "6.2.4"
+local MDT_BUILT_FOR = "6.2.9" -- G5 sweep 2026-08-29: every touchpoint re-verified against 6.2.9
 
 --- Pure comparator (offline-tested): "older" | "newer" when MAJOR.MINOR
 --- differs, nil when in sync or unparseable.
@@ -442,6 +442,12 @@ function Route.BuildMDTPreset(rd)
             realm = rd.createdBy.realm,
             classIdx = rd.createdBy.classIdx,
         } or nil,
+        -- Present-but-empty on purpose (2026-08-24, his threechest.io repro):
+        -- real MDT presets always carry the drawing/note layer, and threechest's
+        -- importer reads `mdtRoute.objects` UNGUARDED (Object.values(undefined) →
+        -- "Cannot convert undefined or null to object", their mdtUtil.ts) while
+        -- MDT itself tolerates the omission. Empty satisfies both.
+        objects = {},
         value = {
             currentDungeonIdx = rd.dungeonIdx,
             currentPull = 1,

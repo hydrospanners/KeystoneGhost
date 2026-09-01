@@ -8,8 +8,8 @@
 -- which pace cars, what your icon wears and how it moves — is an Options
 -- matter and lives here, alongside everything BEHAVIORAL (sharing, data
 -- handling, future setup). The sweep moved "Walking bounce" and "Extra pace
--- cars (+3/+2)" here accordingly. No minimap button: this panel plus /kg are
--- the entry points until the Data-view UI era.
+-- cars (+3/+2)" here accordingly. The minimap button, this panel, and /kg
+-- are the entry points.
 --
 -- Settings API shape verified against live 12.x users in this install
 -- (ArchonTooltip/Settings.lua, BliZzi_Interrupts/UI/Config.lua):
@@ -26,7 +26,7 @@ local KG = NS.KG
 -- convention for a reload-required setting, and the Library's delete dialog already
 -- speaks it. Either way the pick is SAVED: "Later" means next login, not undone.
 StaticPopupDialogs["KEYSTONEGHOST_COLORVISION_RELOAD"] = {
-    text = "Keystone Ghost: color vision set to %s.|nThe race colors change on your next reload.",
+    text = "Keystone Ghost: color vision set to %s.|nThe bar colors change on your next reload.",
     button1 = "Reload now",
     button2 = "Later",
     OnAccept = function() ReloadUI() end,
@@ -37,7 +37,7 @@ StaticPopupDialogs["KEYSTONEGHOST_COLORVISION_RELOAD"] = {
 -- run would undo the point of locking the palette to load — and the recorder would
 -- have to resume the race just to recolor it. It waits.
 StaticPopupDialogs["KEYSTONEGHOST_COLORVISION_LATER"] = {
-    text = "Keystone Ghost: color vision set to %s.|nThe race colors change on your next reload, after this key.",
+    text = "Keystone Ghost: color vision set to %s.|nThe bar colors change on your next reload, after this key.",
     button1 = OKAY,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
@@ -132,13 +132,13 @@ function Options:Setup()
         function() return KG.db.sharePartyNames == true end,
         function(value) KG.db.sharePartyNames = value and true or false end)
 
-    -- The Finish Photo share button (Developer 2026-08-06): one checkbox for
+    -- The Finish Report share button (Developer 2026-08-06): one checkbox for
     -- whether the button exists at all, one dropdown for where it speaks.
     -- Guild is his chosen default door. Both re-read live by ShowSummary, so
-    -- a change lands on an already-open photo.
+    -- a change lands on an already-open report.
     AddCheckbox(category, "KEYSTONEGHOST_PHOTO_SHARE",
         "Share button after a timed key",
-        "The finish picture after a timed key carries a small share button. Clicking it sends your fresh ghost into chat as a clickable link. Keystone Ghost users click it to race your run; everyone else sees plain text. Depleted keys never offer it.",
+        "The Finish Report after a timed key carries a small share button. Clicking it sends your fresh ghost into chat as a clickable link. Keystone Ghost users click it to race your run; everyone else sees plain text. Depleted keys never offer it.",
         true,
         function() return KG.db.photoShare ~= false end,
         function(value) KG.db.photoShare = value and true or false end)
@@ -192,8 +192,17 @@ function Options:Setup()
             for i, key in ipairs(CV_ORDER) do container:Add(i, CV_LABEL[key]) end
             return container:GetData()
         end
+        -- The panel's DEFAULT is whatever the colorblind seed decided at first
+        -- login (council 2026-09-01): registering a fixed 1 made a seeded
+        -- orange/blue install read as "modified", and the Defaults button
+        -- silently flipped a colorblind user back to red/green + a reload
+        -- prompt. Registration runs after Init's seed, so this is stable.
+        local cvDefault = 1
+        for i, key in ipairs(CV_ORDER) do
+            if key == KG.db.colorVision then cvDefault = i end
+        end
         local cvSetting = Settings.RegisterProxySetting(category, "KEYSTONEGHOST_COLOR_VISION",
-            Settings.VarType.Number, "Color vision", 1,
+            Settings.VarType.Number, "Color vision", cvDefault,
             function()
                 for i, key in ipairs(CV_ORDER) do
                     if key == KG.db.colorVision then return i end
@@ -245,7 +254,126 @@ function Options:Setup()
                 KG.Bar:Refresh()
             end)
         Settings.CreateDropdown(category, dmSetting, GetDeathMarkerOptions,
-            "Tombstones on the track. Yours stand where you died and stay. A ghost's stand on its own lane ahead of it and disappear as it reaches them. That's where its run lost time to the death penalty.")
+            "Tombstones on the track. Yours stand where you died and stay. A ghost's markers stand on its own lane ahead of it and disappear as it reaches them. That's where its run lost time to the death penalty.")
+    end
+
+    -- F3 (his yes 2026-08-30): the Library's reset-freshness cue — a best
+    -- set since the weekly reset wears its date in white and its tooltip
+    -- says so. One switch for both cues, on by default; his read "weekly
+    -- best will be a less used feature for most" is why the switch exists.
+    AddCheckbox(category, "KEYSTONEGHOST_RESETFRESH", "Mark this reset's bests",
+        "In the Ghost Library, a best set since the weekly reset shows its date in white and its tooltip names the reset. Turn off for the plain date column.",
+        true,
+        function() return KG.db.resetFresh ~= false end,
+        function(value)
+            KG.db.resetFresh = value and true or false
+            KG.Library:RefreshIfShown()
+        end)
+
+    -- The Rabbit (F5, his W0 verdicts 2026-08-24): the standardized default
+    -- opponent — the timer with a safety margin. Two dropdowns, same verified
+    -- shape as Color vision above. Mode changes touch the reference chain and
+    -- the roster, so both refresh through the usual invalidation door.
+    -- Header per the pace-car cluster's own convention (G3 finding, his yes
+    -- 2026-08-30). The feature's off switch is the Rabbit dropdown's "Never".
+    AddHeader(category, "The Rabbit")
+    if Settings.CreateDropdown and Settings.CreateControlTextContainer then
+        local RB_ORDER = { "auto", "always", "never" }
+        local RB_LABEL = {
+            auto = "When there is nothing else to run against",
+            always = "Always, as an extra lane",
+            never = "Never",
+        }
+        local function GetRabbitModeOptions()
+            local container = Settings.CreateControlTextContainer()
+            for i, key in ipairs(RB_ORDER) do container:Add(i, RB_LABEL[key]) end
+            return container:GetData()
+        end
+        local rbSetting = Settings.RegisterProxySetting(category, "KEYSTONEGHOST_RABBIT_MODE",
+            Settings.VarType.Number, "Rabbit", 1,
+            function()
+                for i, key in ipairs(RB_ORDER) do
+                    if key == (KG.db.rabbitMode or "auto") then return i end
+                end
+                return 1
+            end,
+            function(value)
+                KG.db.rabbitMode = RB_ORDER[value] or "auto"
+                KG.Ghosts:InvalidateRoster()
+                KG.Bar:Refresh()
+            end)
+        Settings.CreateDropdown(category, rbSetting, GetRabbitModeOptions,
+            "A steady ghost that runs the dungeon at a safe pace under the timer. Stay ahead of it and the key is comfortably yours. By default it only shows up when you have no ghost of your own to run against.")
+
+        local RM_ORDER = { 0.85, 0.90, 0.95 }
+        local RM_LABEL = {
+            [0.85] = "Brisk: 85% of the timer",
+            [0.90] = "Steady: 90% of the timer",
+            [0.95] = "Gentle: 95% of the timer",
+        }
+        local function GetRabbitMarginOptions()
+            local container = Settings.CreateControlTextContainer()
+            for i, key in ipairs(RM_ORDER) do container:Add(i, RM_LABEL[key]) end
+            return container:GetData()
+        end
+        local rmSetting = Settings.RegisterProxySetting(category, "KEYSTONEGHOST_RABBIT_MARGIN",
+            Settings.VarType.Number, "Rabbit pace", 2,
+            function()
+                for i, key in ipairs(RM_ORDER) do
+                    if math.abs(key - (KG.db.rabbitMargin or 0.90)) < 0.001 then return i end
+                end
+                return 2
+            end,
+            function(value)
+                KG.db.rabbitMargin = RM_ORDER[value] or 0.90
+                KG.Ghosts:InvalidateRoster()
+                KG.Bar:Refresh()
+            end)
+        Settings.CreateDropdown(category, rmSetting, GetRabbitMarginOptions,
+            "How fast the Rabbit runs. On a 30:00 timer: brisk finishes at 25:30, steady at 27:00, gentle at 28:30.")
+
+        -- The face ladder (his cute→fearsome scale, 2026-08-25): auto follows
+        -- the pace's intensity; a named pick locks it. The scary half of the
+        -- ladder is auto-reserved for the percentile rabbits (F7) but nothing
+        -- stops anyone racing the Darkmoon Rabbit at gentle pace on purpose.
+        local RF_ORDER = { "auto", "spring", "classic", "silver", "polymorph", "darkmoon" }
+        local RF_LABEL = {
+            auto = "Match the pace (cute to fearsome)",
+            spring = "Spring bunny (cutest)",
+            classic = "The classic white rabbit",
+            silver = "Silver",
+            polymorph = "Panicked polymorph",
+            darkmoon = "The Darkmoon Rabbit (fearsome)",
+        }
+        local function GetRabbitFaceOptions()
+            local container = Settings.CreateControlTextContainer()
+            for i, key in ipairs(RF_ORDER) do
+                -- Each entry wears its actual face art (his 2026-09-01 ask:
+                -- "pick which rabbit... on an icon kind of way") — an inline
+                -- texture escape through the Bar's own face door. An icon the
+                -- client can't resolve falls back to the plain label; "auto"
+                -- stays text (it is the whole ladder, not one face).
+                local id = key ~= "auto" and KG.Bar.RabbitFaceIcon and KG.Bar.RabbitFaceIcon(key)
+                container:Add(i, (id and ("|T" .. id .. ":18|t  ") or "") .. RF_LABEL[key])
+            end
+            return container:GetData()
+        end
+        local rfSetting = Settings.RegisterProxySetting(category, "KEYSTONEGHOST_RABBIT_FACE",
+            Settings.VarType.Number, "Rabbit face", 1,
+            function()
+                for i, key in ipairs(RF_ORDER) do
+                    if key == (KG.db.rabbitFace or "auto") then return i end
+                end
+                return 1
+            end,
+            function(value)
+                KG.db.rabbitFace = RF_ORDER[value] or "auto"
+                KG.Ghosts:InvalidateRoster()
+                KG.Bar:Refresh()
+                KG.Splits:Refresh()
+            end)
+        Settings.CreateDropdown(category, rfSetting, GetRabbitFaceOptions,
+            "Which bunny runs. Matching the pace climbs from the spring bunny at gentle up the ladder as the pace demands more; the panicked polymorph and the Darkmoon Rabbit are pick-only. Pick one to lock it.")
     end
 
     -- The marker hat (easter egg, Developer 2026-07-28). PANEL, not Edit Mode — it
