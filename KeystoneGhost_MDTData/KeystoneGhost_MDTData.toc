@@ -2,7 +2,7 @@
 ## Title: Keystone Ghost - MDT Data Bridge
 ## Notes: Demand-loaded bridge to Mythic Dungeon Tools' dungeon data (MDT 6.2+). Does nothing on its own.
 ## Author: Hydrospanners
-## Version: 0.16.0
+## Version: 1.0.0
 ## Category: Dungeons & Raids
 ## LoadOnDemand: 1
 ## Dependencies: MythicDungeonTools

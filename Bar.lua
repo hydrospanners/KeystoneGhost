@@ -1001,6 +1001,28 @@ Bar.RabbitFaceIcon = RabbitFaceID -- (faceKey) → fileID|false; the Options
 
 local ownerMemo = setmetatable({}, { __mode = "k" }) -- [run table] = charKey | false
 
+--- The run's owner CLASS token (#146 follow-up, his Gandalfred catch): an
+--- import names its exporter in importedFrom; a same-account alt's run
+--- carries nothing, so ask the store who owns it — MEMOIZED per run table
+--- (weak keys; council 2026-09-01: the call sites ride the 0.1s repaint,
+--- and a full-store identity sweep per icon per tick is not "event-time").
+--- A run's storage identity never changes while its table lives. The
+--- viewer's class stays the last resort — a run stored nowhere is your own
+--- live/demo recording.
+local function RunnerClassToken(run)
+    local ownerKey = run.importedFrom
+    if not ownerKey then
+        local hit = ownerMemo[run]
+        if hit == nil then
+            hit = KG.Ghosts:FindRunOwner(run) or false
+            ownerMemo[run] = hit
+        end
+        ownerKey = hit or nil
+    end
+    return (type(ownerKey) == "string" and ownerKey:match("%-([^%-]+)$"))
+        or select(2, UnitClass("player"))
+end
+
 local function ApplyRunnerIcon(tex, run)
     tex:SetAlpha(1) -- pooled texture: the Rabbit's fade must not leak to others
     if run.rabbit then -- the Rabbit's lane runner: its face, a few % faded
@@ -1028,25 +1050,7 @@ local function ApplyRunnerIcon(tex, run)
         tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         return
     end
-    -- The run's own class, never the viewer's (#146 follow-up, his Gandalfred
-    -- catch): an import names its exporter in importedFrom; a same-account
-    -- alt's run carries nothing, so ask the store who owns it. MEMOIZED per
-    -- run table (weak keys — council 2026-09-01: the call sites ride the
-    -- 0.1s repaint, and an identity sweep of the whole store per icon per
-    -- tick is not "event-time"). A run's storage identity never changes
-    -- while its table lives; deleted runs stop painting. The viewer's class
-    -- stays the last resort — a run stored nowhere is your own live/demo.
-    local ownerKey = run.importedFrom
-    if not ownerKey then
-        local hit = ownerMemo[run]
-        if hit == nil then
-            hit = KG.Ghosts:FindRunOwner(run) or false
-            ownerMemo[run] = hit
-        end
-        ownerKey = hit or nil
-    end
-    local token = (type(ownerKey) == "string" and ownerKey:match("%-([^%-]+)$"))
-        or select(2, UnitClass("player"))
+    local token = RunnerClassToken(run)
     local coords = token and _G.CLASS_ICON_TCOORDS and _G.CLASS_ICON_TCOORDS[token]
     if coords then
         tex:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
@@ -1057,6 +1061,30 @@ local function ApplyRunnerIcon(tex, run)
     end
 end
 Bar.ApplyRunnerIconTo = ApplyRunnerIcon -- (tex, run) — roster rows mirror their runner
+
+--- The runner's icon as an inline TEXTURE ESCAPE for FontStrings (his
+--- 2026-09-02 ruling: the stored report's splits columns show the runner's
+--- SYMBOL, not a name). Same branches as ApplyRunnerIcon — one language,
+--- second output form. Always returns a renderable escape (watch fallback).
+function Bar.RunnerIconEscape(run, size)
+    size = size or 14
+    if run.rabbit then
+        local id = RabbitFace()
+        if id then return "|T" .. id .. ":" .. size .. "|t" end
+    elseif run.legacy == "RIO" then
+        local logo = RaiderIOLogo()
+        if logo then return "|T" .. logo .. ":" .. size .. "|t" end
+    else
+        local token = RunnerClassToken(run)
+        local coords = token and _G.CLASS_ICON_TCOORDS and _G.CLASS_ICON_TCOORDS[token]
+        if coords then
+            return string.format(
+                "|TInterface\\TargetingFrame\\UI-Classes-Circles:%d:%d:0:0:256:256:%d:%d:%d:%d|t",
+                size, size, coords[1] * 256, coords[2] * 256, coords[3] * 256, coords[4] * 256)
+        end
+    end
+    return "|TInterface\\Icons\\INV_Misc_PocketWatch_01:" .. size .. "|t"
+end
 
 --- Ghost cursor icon by reference kind: character ghosts (own / imported) show the
 --- round class icon — class COLOR block as fallback when the icon coords are

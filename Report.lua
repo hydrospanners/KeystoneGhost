@@ -463,8 +463,19 @@ local function Paint(d)
         head.left:ClearAllPoints(); head.mine:ClearAllPoints()
         head.ref:ClearAllPoints(); head.delta:ClearAllPoints()
         PlaceRow(head, y)
-        head.left:SetText("boss"); head.mine:SetText("you")
-        head.ref:SetText("ghost"); head.delta:SetText("Δ")
+        -- Stored views head the columns with the runners' SYMBOLS (his
+        -- 2026-09-02 call — the RIO logo, a class circle, the Rabbit's
+        -- face; the words "you"/"ghost" stay for a live finish, where they
+        -- are true).
+        head.left:SetText("boss")
+        if mode == "stored" and d.run then
+            head.mine:SetText(KG.Bar.RunnerIconEscape(d.run, 14))
+            head.ref:SetText(d.refRun and KG.Bar.RunnerIconEscape(d.refRun, 14) or "ghost")
+        else
+            head.mine:SetText("you")
+            head.ref:SetText("ghost")
+        end
+        head.delta:SetText("Δ")
         head.left:SetTextColor(DIM[1], DIM[2], DIM[3])
         head.mine:SetTextColor(DIM[1], DIM[2], DIM[3])
         head.ref:SetTextColor(DIM[1], DIM[2], DIM[3])
@@ -759,40 +770,35 @@ function Report:ShowStored(charKey, mapID, level, tier)
             end
         end
     end
-    if #pool > 0 then
-        -- vs = the nearest other ghost by time: the closest race this store
-        -- offers, and it is always one of the board's rows below.
-        local opp
-        for _, e in ipairs(pool) do
-            if not opp or math.abs(e.run.durationSec - run.durationSec)
-                < math.abs(opp.run.durationSec - run.durationSec) then
-                opp = e
-            end
-        end
-        -- The label: Raider.IO and imports self-describe through the live
-        -- door (RefForRun); a plain local run gets an owner-aware line — the
-        -- door would call every bare run "Your", which is false cross-alt.
-        if opp.run.legacy == "RIO" or opp.run.importedFrom then
-            local ref = KG.Ghosts.RefForRun and KG.Ghosts:RefForRun(opp.run)
-            d.refLabel = ref and ref.label or opp.tag
-        else
-            local who = opp.ck == KG.CharacterKey() and "Your" or (opp.tag .. "'s")
-            d.refLabel = string.format("%s %s%s (%s)", who, M.TierLabel(opp.run.chests),
-                opp.run.level and (" +" .. opp.run.level) or "", M.FormatClock(opp.run.durationSec))
-        end
-        d.diff = opp.run.durationSec - run.durationSec
+    -- The vs opponent = exactly what a live key here would race (his
+    -- 2026-09-02 ruling, replacing the closest-by-time cut): the one
+    -- reference chain — pin, own best, Raider.IO, season best, the Rabbit,
+    -- par (Ghosts:BuildReference, hides honored). Viewing the very run the
+    -- chain resolves to leaves nothing to compare: no vs section at all,
+    -- which is the honest answer.
+    local ref = KG.Ghosts.BuildReference and KG.Ghosts:BuildReference(mapID, level) or nil
+    if ref and ref.run ~= run then
+        d.refLabel = ref.label
+        d.refRun = ref.run -- the ghost column's symbol resolves from this
+        d.diff = (ref.durationSec or 0) - (run.durationSec or 0)
         -- splits vs the same opponent (the live recipe; stored stamps are
-        -- honest by construction — resume-seeding never reaches the store)
-        if run.bossKills and opp.run.bossKills then
-            local raw = M.SplitRows(run.bossKills, opp.run.bossKills, run.bossIDs, opp.run.bossIDs)
+        -- honest by construction — resume-seeding never reaches the store).
+        -- Synthetic references (season best / Rabbit / par) carry no boss
+        -- kills, so the section stays away and only the finish gap speaks.
+        if run.bossKills and ref.run and ref.run.bossKills then
+            local raw = M.SplitRows(run.bossKills, ref.run.bossKills, run.bossIDs, ref.run.bossIDs)
             local splits = {}
             for _, r in ipairs(raw) do
                 splits[#splits + 1] = { label = "B" .. r.idx, mine = r.mine, ref = r.ref, delta = r.delta }
             end
-            splits[#splits + 1] = { label = "finish", mine = run.durationSec,
-                ref = opp.run.durationSec, delta = run.durationSec - opp.run.durationSec }
-            d.splits = splits
+            if run.durationSec and ref.durationSec then
+                splits[#splits + 1] = { label = "finish", mine = run.durationSec,
+                    ref = ref.durationSec, delta = run.durationSec - ref.durationSec }
+            end
+            if #splits > 0 then d.splits = splits end
         end
+    end
+    if #pool > 0 then
         -- the board: the subject + the two ghosts closest to its clock either
         -- side, fastest first — the live board's exact rule over this pool
         table.sort(pool, function(a, b) return a.run.durationSec < b.run.durationSec end)
@@ -800,9 +806,16 @@ function Report:ShowStored(charKey, mapID, level, tier)
         for _, e in ipairs(pool) do
             if e.run.durationSec <= run.durationSec then faster = e else slower = slower or e end
         end
+        local isMine = charKey == KG.CharacterKey()
+        -- The subject's display name, shared by the board row AND the splits
+        -- header (his 2026-09-01 question on the RIO row's report: the
+        -- splits column said "you" for a run that was not his — live-mode
+        -- wording leaking into stored views). Nil = it really is you.
+        d.subjectTag = not isMine
+            and (owner or (charKey == KG.RIO_CHAR and "RIO") or "?") or nil
         local board = { {
-            you = charKey == KG.CharacterKey(), subject = true,
-            tag = owner or (charKey == KG.RIO_CHAR and "RIO") or "?",
+            you = isMine, subject = true,
+            tag = d.subjectTag or "you",
             durationSec = run.durationSec, chests = run.chests, level = level,
         } }
         local function addRow(e)
