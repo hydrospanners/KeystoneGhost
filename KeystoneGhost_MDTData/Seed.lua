@@ -51,5 +51,10 @@ D.zoneIdToDungeonIdx = {}
 D.dungeonSelectionToIndex = {}
 D.seasonList = {}
 
+-- MDT 6.2.20 dungeon files call this at line ~13, before their enemy tables.
+-- Without it every file aborts there and dungeonEnemies stays empty. It only
+-- feeds MDT's zone auto-select, which we never read, so a no-op is enough.
+function D:RegisterDungeonLocation() end
+
 -- The one global handle Route.lua reads after its LoadAddOn call succeeds.
 KeystoneGhost_MDTData = D

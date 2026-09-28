@@ -356,14 +356,29 @@ local function Paint(d)
     local base = ScoreTable()
     local total, baseVal, bonus
     if base then total, baseVal, bonus = M.ScoreForRun(d.level, d.finalTime, d.par, base) end
+    local parts = {}
     if total then
         -- Pre-rounded half up (M.Round1): bare %.1f banker's-rounds 332.25 to
         -- 332.2 where raider.io's page says 332.3 (#147, his catch).
-        frame.scoreText:SetText(string.format("score |cffe8c37a%.1f|r\n|cff8c8c8c%d base · +%.1f speed|r",
-            M.Round1(total), baseVal, M.Round1(bonus)))
-    else
-        frame.scoreText:SetText("")
+        parts[#parts + 1] = string.format("score |cffe8c37a%.1f|r\n|cff8c8c8c%d base · +%.1f speed|r",
+            M.Round1(total), baseVal, M.Round1(bonus))
     end
+    -- The pace chip (F7, 2026-09-10): the run's field percentile off the
+    -- shipped curve — timed runs only, and only while the curve's season
+    -- fingerprint matches (the score gate's twin, in Ghosts:PaceCurve).
+    -- Slower than the sampled floor = no claim, the chip stays away.
+    if timed then
+        local mapID = d.mapID or (d.run and d.run.mapID)
+        local entry, grid, scope = KG.Ghosts:PaceCurve(mapID, d.level)
+        local pct = entry and M.PacePercentile(entry, grid, d.finalTime)
+        if pct then
+            -- "faster than X%" (raider.io's own framing): honest at both ends
+            -- of the curve, where "top Y%" reads as praise for a crawl.
+            parts[#parts + 1] = string.format("pace |cffe8c37afaster than %d%%|r |cff8c8c8c(%s)|r",
+                math.min(99, math.max(1, math.floor(pct + 0.5))), scope)
+        end
+    end
+    frame.scoreText:SetText(table.concat(parts, "\n"))
 
     -- the celebration: flag + hop for a timed run; a deplete stands down whole
     frame.flag:SetShown(timed)

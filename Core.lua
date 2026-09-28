@@ -134,6 +134,7 @@ KG.CopyPrompts = {
     -- browser to "keep" these — the saved link IS the backup.
     LIBRARYCLEAR = { "If you want to store the library, save this link somewhere. Closing this window then deletes last season's ghosts — ESC if not yet:" },
     MDTROUTE = { "Copy this, then paste it in MDT under Import Preset:", "route string copied. Paste it in MDT under Import Preset." },
+    DIAG = { "Copy this and paste it to whoever asked for it. It lists your settings, your stored ghosts and the last 40 key starts and ends:", "diagnostics copied." },
 }
 
 --- Open the copy window for one of the CopyPrompts kinds. `onCommit` runs once
@@ -160,7 +161,7 @@ StaticPopupDialogs["KEYSTONEGHOST_IMPORT"] = {
         if run then
             local routeNote = ""
             if run.routeHash and KG.Ghosts:RouteForHash(run.routeHash) then
-                routeNote = (" · route \"%s\" included. /kg route hands it to MDT")
+                routeNote = (" · route \"%s\" included. The route cell in the Ghost Library hands it to MDT")
                     :format(KG.Ghosts:RouteForHash(run.routeHash).name or "?")
             elseif run.routeName then
                 routeNote = " · route: " .. run.routeName
@@ -181,8 +182,8 @@ StaticPopupDialogs["KEYSTONEGHOST_IMPORT"] = {
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
---- Hand an embedded route to MDT (ghost badge click / Library route cell /
---- "/kg route"): the route becomes an MDT IMPORT STRING in the copy window —
+--- Hand an embedded route to MDT (the Library route cell — the last standing
+--- door): the route becomes an MDT IMPORT STRING in the copy window —
 --- MDT's own "Import Preset" dialog reads it, and the paste is the consent.
 --- The string needs nothing from MDT to build (native client encoding), so it
 --- works even with MDT missing entirely — the receiver can install MDT later
@@ -222,23 +223,6 @@ SlashCmdList.KEYSTONEGHOST = function(input)
             Print("stored ghosts:")
             for _, l in ipairs(lines) do print("   " .. l) end
         end
-    elseif cmd == "export" then
-        local mapID = KG.Scenario:GetChallengeMapID()
-        local level = tonumber(arg) or KG.Scenario:GetActiveKeyLevel()
-        if not mapID and KG.db.lastRecorded then
-            mapID = KG.db.lastRecorded.mapID
-            level = tonumber(arg) or KG.db.lastRecorded.level
-        end
-        if not mapID or not level then
-            Print("nothing to export. Be in a key, or finish a run first (/kg export [level]).")
-        else
-            local str, err = KG.Ghosts:ExportString(mapID, level)
-            if str then
-                KG.ShowCopy("EXPORT", str)
-            else
-                Print("export failed: " .. (err or "unknown error"))
-            end
-        end
     elseif cmd == "online" or cmd == "library" then
         -- The portal door (DESIGN "Library export → the portal"). The Ghost
         -- Library's own button is the discoverable one; this is the typist's.
@@ -249,28 +233,18 @@ SlashCmdList.KEYSTONEGHOST = function(input)
         else
             Print(err or "nothing to open online yet.")
         end
-    elseif cmd == "import" then
-        StaticPopup_Show("KEYSTONEGHOST_IMPORT")
     elseif cmd == "options" or cmd == "config" then
         if not KG.Options:Open() then
             Print("options panel unavailable: Settings API not found.")
         end
-    elseif cmd == "route" then
-        -- The raced ghost's embedded route first (live race or Finish Photo), else
-        -- the most recent import's — the receiver wants it BEFORE the key starts.
-        -- The fallback is fenced to the dungeon we are standing in: in a key, "no
-        -- route here" must print, never load the last route from somewhere else.
-        local st = KG.Bar.GetLiveState()
-        local ref = (st and st.ref) or (KG.Recorder.summary and KG.Recorder.summary.ref)
-        local here = KG.Scenario:GetStagingMapID() or select(1, KG.Recorder:GetContext())
-        local rd = ref and ref.run and ref.run.routeHash
-            and KG.Ghosts:RouteForHash(ref.run.routeHash) or KG.Ghosts:LastImportedRoute(here)
-        if rd then
-            KG.RequestRouteLoad(rd)
-        elseif here then
-            Print("no route for this dungeon. Race or import a ghost that carries one.")
+    elseif cmd == "diag" then
+        -- The support door (2026-09-08, Diag.lua): dev-tier like sharetag; the
+        -- Options panel's Support button is the discoverable one.
+        if arg == "clear" then
+            KG.Diag:Clear()
+            Print("race log cleared.")
         else
-            Print("no embedded route found. Race or import a ghost that carries one.")
+            KG.ShowCopy("DIAG", KG.Diag:Dump())
         end
     elseif cmd == "sharetag" then
         -- Undocumented (dev-tier until the sharing UI's reset action lands in the
@@ -284,14 +258,12 @@ SlashCmdList.KEYSTONEGHOST = function(input)
                 .. ". Reset: /kg sharetag reset")
         end
     else
-        -- Prune wave 2 EXECUTED (2026-07-21, 3b close — wave 1 was 2026-07-20):
-        -- the sharing trio (export/import/route) left the help — the Ghost
-        -- Library covers all three (per-row share, Import button, route-cell
-        -- click) plus the chat share. The commands KEEP WORKING undocumented
-        -- for one release, then die. test, list, sharetag also work
-        -- undocumented (dev tier). hide/show/toggle are GONE — his W0 call
-        -- (C1, 2026-08-24): the Library eye is the door, the commands died
-        -- with the per-character hiding build.
+        -- Slash cleanup finale (2026-09-04, one release after 1.0 as promised
+        -- when the trio left the help): export/import/route are DELETED — the
+        -- Ghost Library covers all three (per-row share, Import button,
+        -- route-cell click) plus the chat share. test, list, sharetag still
+        -- work undocumented (dev tier). hide/show/toggle died 2026-08-24 with
+        -- per-character hiding (the Library eye is the door).
         Print("commands:")
         print("   /kg - the Ghost Library: browse, pin, share, delete your stored ghosts")
         print("   /kg options - addon options (display + behavior; size & position live in Edit Mode)")

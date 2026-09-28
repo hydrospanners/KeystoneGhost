@@ -2,6 +2,33 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [1.1.0] - 2026-09-28
+
+- Added percentile paces to the Rabbit, p50 to p99. The Rabbit runs at
+  that percentile of Raider.IO clear times for your dungeon and key level.
+  Where the data is too thin it runs at Steady.
+- Added "pace: faster than X%" to the Finish Report and to stored run
+  reports for timed runs.
+- Changed the fallback opponent: with no timed run in a dungeon you race
+  the Rabbit, not your season best.
+- Changed the Rabbit's always-on lane to take one Ghost Roster row.
+- Added an Enable checkbox for the Rabbit.
+- Sorted the options panel into sections.
+- Changed the reset-bests date cue to off by default. An existing tick
+  stays on.
+- Added a filter box to the Ghost Library.
+- Added Check imports to Select many. It ticks every imported ghost.
+- Added an update notice for guildmates on an older version when you
+  share with them.
+- Removed `/kg export`, `/kg import` and `/kg route`. The Ghost Library
+  does all three.
+- Fixed route features not loading with Mythic Dungeon Tools 6.2.20.
+- Added a Support section to the options panel with a Copy diagnostics
+  button (also `/kg diag`). It opens a text with your settings, your stored
+  ghosts and a persistent log of your last 40 key starts and ends: which
+  ghost raced you and why, what the roster held, and whether each finished
+  run was saved. Paste it to whoever is helping you.
+
 ## [1.0.0] - 2026-09-04
 
 - Version 1.0. Feature-complete for season 2; changes since 0.16.0 are the

@@ -138,7 +138,7 @@ end
 
 function R:GetContext() return rec.mapID, rec.level end
 
-function R:OnKeyStart()
+function R:OnKeyStart(why)
     -- Safeguard (Developer 2026-07-20, Live Test 1): a forgotten /kg test must never
     -- shadow a REAL key. Recording always ran underneath test mode (it is
     -- event-driven and ignores the display), but the bar would have kept showing
@@ -204,6 +204,7 @@ function R:OnKeyStart()
     KG.db.liveRun = rec
 
     R.currentRef = rec.mapID and KG.Ghosts:BuildReference(rec.mapID, rec.level) or nil
+    KG.Diag:LogRaceStart(rec, R.currentRef, why or "start")
 
     -- The Raced-Ghost Switch core (docs/SWITCH-WORKSHOP.md): one Overtake state per
     -- run, attached to the initial pick. Imports start PINNED (S13) — competing
@@ -239,7 +240,7 @@ function R:Resume()
     end
     KG.db.liveRun = nil -- provably not this run (or unusable): the stale slot dies
 
-    R:OnKeyStart()
+    R:OnKeyStart("seed")
     rec.startTime = GetTime() - elapsed
     rec.awaitingTimer = nil -- resumed mid-run: the timer is provably running
     rec.partial = true
@@ -314,6 +315,7 @@ function R:AdoptLiveRun(lr, elapsed)
     rec.pullTimes = KG.PullTrack:GetPullTimes()
     rec.pullFirstForces = KG.PullTrack:GetPullFirstForces()
     R.currentRef = KG.Ghosts:BuildReference(rec.mapID, rec.level)
+    KG.Diag:LogRaceStart(rec, R.currentRef, "resume")
     R.lastSwitch = nil
     overtake = R.currentRef
         and KG.Overtake.New(R.currentRef.run,
@@ -675,11 +677,18 @@ function R:OnKeyEnd()
     KG.db.liveRun = nil -- run over: detach the resume slot (saved stays usable locally)
     R.currentRef = nil
     if not saved.snapshots or #saved.snapshots < MIN_SNAPSHOTS or not saved.mapID or not saved.startTime then
+        if saved.active then
+            KG.Diag:LogKeyEnd(saved, saved.level, 0, nil, nil,
+                "too little recorded (snapshots, dungeon or start time missing)")
+        end
         return
     end
 
     local done = S:GetCompletion()
-    if done and done.practiceRun then return end
+    if done and done.practiceRun then
+        KG.Diag:LogKeyEnd(saved, done.level or saved.level, done.chests or 0, done.timeSec, nil, "practice run")
+        return
+    end
     local durationSec = (done and done.timeSec) or (GetTime() - saved.startTime)
     local level = (done and done.level) or saved.level or 0
     local chests = done and done.chests
@@ -766,9 +775,15 @@ function R:OnKeyEnd()
         print("|cff88ccffKeystoneGhost|r: " .. msg .. ".")
     end
 
-    if saved.partial then return end -- resumed after /reload: timeline incomplete, never save
+    if saved.partial then -- resumed after /reload: timeline incomplete, never save
+        KG.Diag:LogKeyEnd(saved, level, chests, durationSec, nil, "timeline incomplete after a /reload or relog mid-key")
+        return
+    end
 
-    if (saved.lastTotal or 0) <= 0 then return end -- forces never readable: nothing raceable to keep
+    if (saved.lastTotal or 0) <= 0 then -- forces never readable: nothing raceable to keep
+        KG.Diag:LogKeyEnd(saved, level, chests, durationSec, nil, "enemy forces total never readable")
+        return
+    end
 
     local stored = KG.Ghosts:Save(R.ShapeRun(saved, {
         durationSec = durationSec,
@@ -778,7 +793,8 @@ function R:OnKeyEnd()
         week = S:WeekEndEpoch(), -- reset-week identity ("reset best" seed, 2026-07-21)
         party = S:GetPartyContext(), -- ratings at completion
     }))
-    KG.db.lastRecorded = { mapID = saved.mapID, level = level } -- default /kg export target
+    KG.Diag:LogKeyEnd(saved, level, chests, durationSec, stored and true or false, nil)
+    KG.db.lastRecorded = { mapID = saved.mapID, level = level } -- OnRunSaved finds the row by this
     if stored and saved.route and saved.route.hash and saved.route.pulls then
         KG.Ghosts:StoreRoute(saved.route) -- the run's route as it was AT KEY START
     end

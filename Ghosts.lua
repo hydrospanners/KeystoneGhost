@@ -108,18 +108,78 @@ local function ClearHidesAt(charKey, mapID, level, tier)
     end
 end
 
+-- ── The pace curves (F7 wave 3, 2026-09-10) ───────────────────────────────────
+-- Data_PaceCurves.lua ships the field's clear-time percentile anchors per
+-- (dungeon, level, scope), sampled from Raider.IO per release. Same season
+-- gate as the Finish Report's score table: an unreadable roster stays
+-- UNDECIDED (the map table fills asynchronously after login), a mismatched
+-- one hides the data rather than let last season's field speak.
+local curveOK
+local function CurveTable()
+    if curveOK == nil then
+        local curves = KG.PACE_CURVES
+        if not curves then
+            curveOK = false
+            return nil
+        end
+        local ok, ids = pcall(function()
+            return S and S.GetSeasonMapIDs and S:GetSeasonMapIDs()
+        end)
+        if not ok then ids = nil end
+        if type(ids) ~= "table" or #ids == 0 then return nil end
+        if #ids ~= #curves.roster then
+            curveOK = false
+            return nil
+        end
+        local live = {}
+        for i = 1, #ids do live[i] = ids[i] end
+        table.sort(live)
+        curveOK = true
+        for i = 1, #live do
+            if live[i] ~= curves.roster[i] then curveOK = false break end
+        end
+    end
+    return curveOK and KG.PACE_CURVES or nil
+end
+
+--- The curve entry for (dungeon, level) in the viewer's region scope, else the
+--- world scope — `{ pop, p = {[pct]=seconds} }` plus the grid and the scope
+--- label actually used ("EU"/"world"). Exact level only: a level the sample
+--- skipped (thin population) makes no claim at that level.
+function G:PaceCurve(mapID, level)
+    local curves = CurveTable()
+    if not curves or not mapID or not level then return nil end
+    local region = S and S.Region and S:Region()
+    local scope = region and curves.scopes[region:lower()] and region:lower() or "world"
+    local byMap = curves.scopes[scope]
+    local entry = byMap and byMap[mapID] and byMap[mapID][level]
+    if not entry then return nil end
+    return entry, curves.grid, scope == "world" and "world" or scope:upper()
+end
+
 -- ── The Rabbit (F5, his W0 verdicts 2026-08-24) ───────────────────────────────
--- One synthetic linear ghost per (dungeon, margin): the timer with a safety
--- margin, default 90% (his pick — a wipe's worth of slack; ≈p33 on launch-week
--- curves, but the margin is time-based on purpose and never drifts). Memoized so
--- the table is STABLE across roster rebuilds — Splits' rows-never-leave rule
--- dedups by table identity, and a fresh table each rebuild would double rows.
+-- One synthetic linear ghost per (dungeon, pace): the timer with a safety
+-- margin, default 90% (his pick — a wipe's worth of slack; the margin paces
+-- are time-based on purpose and never drift) — or, since F7 (2026-09-10), a
+-- field percentile off the shipped curve: db.rabbitPace = "p50".."p99" runs
+-- at the anchor time for YOUR key level, falling back to the margin pace
+-- when the curve has no answer (stale season, unsampled level, no level in
+-- the demo paths). Memoized so the table is STABLE across roster rebuilds —
+-- Splits' rows-never-leave rule dedups by table identity, and a fresh table
+-- each rebuild would double rows.
 local rabbitRuns = {}
-function G:RabbitRun(mapID)
+function G:RabbitRun(mapID, level)
     if (KG.db.rabbitMode or "auto") == "never" then return nil end
     local par = S:GetParTimeSec(mapID)
     if not par then return nil end
-    local dur = math.floor(par * (KG.db.rabbitMargin or 0.90) + 0.5)
+    local dur
+    local pace = KG.db.rabbitPace
+    local pct = type(pace) == "string" and tonumber(pace:match("^p(%d+)$")) or nil
+    if pct then
+        local entry = G:PaceCurve(mapID, level)
+        dur = entry and entry.p and tonumber(entry.p[pct]) or nil
+    end
+    dur = dur or math.floor(par * (KG.db.rabbitMargin or 0.90) + 0.5)
     local key = mapID .. ":" .. dur
     local run = rabbitRuns[key]
     if not run then
@@ -172,26 +232,9 @@ function G:RouteForHash(hash)
     return hash and KG.db.routes and KG.db.routes[hash] or nil
 end
 
---- The most recently imported ghost's Route Store entry (/kg route outside a key —
---- the receiver wants the route BEFORE stepping into the dungeon). `wantMapID`
---- (given whenever we know which dungeon is meant) fences it to that dungeon: the
---- last import is a fallback, never a reason to hand MDT another dungeon's route.
-function G:LastImportedRoute(wantMapID)
-    local li = KG.db.lastImported
-    if not li then return nil end
-    if wantMapID and li.mapID ~= wantMapID then return nil end
-    local byMap = KG.db.runs[li.char]
-    local tiers = byMap and byMap[li.mapID] and byMap[li.mapID][li.level]
-    if not tiers then return nil end
-    for tier = KG.MAX_TIER, 0, -1 do
-        local run = tiers[tier]
-        if run and run.routeHash then
-            local rd = G:RouteForHash(run.routeHash)
-            if rd then return rd end
-        end
-    end
-    return nil
-end
+-- (LastImportedRoute lived here until 2026-09-04 — it served /kg route's
+-- outside-a-key fallback and died with the command in the slash finale. The
+-- Library route cell reads RouteForHash directly.)
 
 --- GC: tier-slot eviction can orphan a stored route — drop entries no run references.
 function G:SweepRoutes()
@@ -607,7 +650,7 @@ function G:StoreImport(run, exporter, route, shareTag)
     end
     local mine = G:MyPicks(true)
     mine[run.mapID] = { char = exporter, level = run.level, tier = run.chests }
-    db.lastImported = { char = exporter, mapID = run.mapID, level = run.level }
+    db.lastImported = nil -- retired 2026-09-04: /kg route's fallback died with the command
     G:SweepRoutes() -- InsertRun may have rejected the run: don't keep an orphan route
     return run
 end
@@ -939,9 +982,9 @@ end
 --- (Library pin / import auto-pick — one per dungeon, races ANY key level;
 --- Developer 2026-07-21: "you might want to race against your +12 in a +20")
 --- → own recorded run (exact level → highest below → lowest above) →
---- Raider.IO ghost (fresh convert → stored cache → live mirror) → season best
---- → the Rabbit (par × margin, F5 2026-08-24; "never" skips it) → par
---- (linear) → par (linear). Every reference carries `snapshots` so the bar and
+--- Raider.IO ghost (fresh convert → stored cache → live mirror) → the Rabbit
+--- (par × margin, F5 2026-08-24; "never" skips it; above season best since
+--- 2026-09-08) → season best → par (linear). Every reference carries `snapshots` so the bar and
 --- delta math treat all kinds uniformly. Depleted (tier 0) runs are recorded
 --- but NEVER raced (Developer 2026-07-19) — the +1 sweeper is the deplete
 --- pressure. Hidden Ghosts (2026-07-22) are skipped by every automatic step
@@ -1020,6 +1063,25 @@ function G:BuildReference(mapID, level)
     local rio = G:BuildRioRef(mapID)
     if rio then return rio end
 
+    -- The Rabbit (F5, his W0 verdicts 2026-08-24): the standardized default
+    -- opponent — the timer with a safety margin, a floor with meaning ("am I
+    -- comfortably beating this key?"). Chain position IS the "show when no
+    -- other data is relevant" mode: it answers only when nothing above did.
+    -- "Never" restores the bare par floor below, exactly as before F5.
+    -- Above the season best since 2026-09-08 (his call, a pusher's stream: a
+    -- season best is a straight line wearing the watch, the Rabbit is a
+    -- straight line wearing a face — same information, a visible opponent).
+    -- Revert = move this block back under the season-best one.
+    local rabbit = G:RabbitRun(mapID, level)
+    if rabbit then
+        return {
+            kind = "rabbit",
+            label = "Rabbit (" .. M.FormatClock(rabbit.durationSec) .. ")",
+            run = rabbit,
+            durationSec = rabbit.durationSec,
+        }
+    end
+
     local best = S:GetSeasonBestSec(mapID)
     if best then
         return {
@@ -1027,21 +1089,6 @@ function G:BuildReference(mapID, level)
             label = "Season best (" .. M.FormatClock(best) .. ")",
             run = { snapshots = M.LinearSnapshots(best), durationSec = best, total = 100 },
             durationSec = best,
-        }
-    end
-
-    -- The Rabbit (F5, his W0 verdicts 2026-08-24): the standardized default
-    -- opponent — the timer with a safety margin, a floor with meaning ("am I
-    -- comfortably beating this key?"). Chain position IS the "show when no
-    -- other data is relevant" mode: it answers only when nothing above did.
-    -- "Never" restores the bare par floor below, exactly as before F5.
-    local rabbit = G:RabbitRun(mapID)
-    if rabbit then
-        return {
-            kind = "rabbit",
-            label = "Rabbit (" .. M.FormatClock(rabbit.durationSec) .. ")",
-            run = rabbit,
-            durationSec = rabbit.durationSec,
         }
     end
 
@@ -1116,6 +1163,17 @@ end
 function G:BuildRoster(mapID, level, wantRoute)
     if not level then return {} end -- key level unreadable (secret flicker): no roster, no crash
     local target = KG.db.rosterSize or 3
+    -- The Rabbit's always-lane sits INSIDE the roster budget (his call
+    -- 2026-09-10: "Show 3" means 3 rows, Rabbit included — it was an extra
+    -- lane on top from F5 until now). Reserve its slot before the chain
+    -- fills; the append at the bottom keeps the chain's order untouched.
+    -- rosterSize 0 keeps its promise ("only the ghost you are racing") and
+    -- now holds it against the Rabbit too.
+    local rabbit
+    if (KG.db.rabbitMode or "auto") == "always" and target > 0 then
+        rabbit = G:RabbitRun(mapID, level)
+        if rabbit then target = target - 1 end
+    end
     local out, seen = {}, {}
     local myKey = KG.CharacterKey()
     local hiddenSet = G:HiddenRunSet() -- this character's parked run tables (F9)
@@ -1189,15 +1247,11 @@ function G:BuildRoster(mapID, level, wantRoute)
         if rio then add(rio, "RIO") end
     end
 
-    -- "Always show" the Rabbit (F5, 2026-08-24): the one optional EXTRA lane —
-    -- outside the rosterSize budget on purpose (the raced-row prepend already
-    -- proves a row beyond the slider works). The auto mode never sits in the
+    -- "Always show" the Rabbit (F5, 2026-08-24; budget-included since
+    -- 2026-09-10, slot reserved above). The auto mode never sits in the
     -- roster; it IS the reference floor when nothing else answers.
-    if (KG.db.rabbitMode or "auto") == "always" then
-        local rabbit = G:RabbitRun(mapID)
-        if rabbit and not seen[rabbit] then
-            out[#out + 1] = { run = rabbit, tag = "Rabbit" }
-        end
+    if rabbit and not seen[rabbit] then
+        out[#out + 1] = { run = rabbit, tag = "Rabbit" }
     end
 
     return out

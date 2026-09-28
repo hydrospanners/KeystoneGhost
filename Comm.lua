@@ -78,9 +78,17 @@ function Comm.SplitChunks(s, size)
     return out
 end
 
---- Protocol lines. Q = request, D = data chunk.
+--- Protocol lines. Q = request, D = data chunk, V = version beacon.
+--- V is gossip riding the share pipe (EXPANSIONS quick win, 2026-09-04): one
+--- hidden addon message beside every share and request. Old clients parse Q
+--- and D and silently drop everything else, so the beacon costs them nothing;
+--- new clients answer a newer version with the one-per-session update line.
+--- The visible marker itself never changed — its wire shape is load-bearing
+--- for old ParseMarker patterns.
 function Comm.BuildRequest(token) return "Q:" .. token end
 function Comm.ParseRequest(msg) return msg:match("^Q:(KG%x+%.%d+)$") end
+function Comm.BuildVersionBeacon(version) return "V:" .. version end
+function Comm.ParseVersionBeacon(msg) return msg:match("^V:([%w%.%-]+)$") end
 function Comm.BuildChunk(token, i, n, part)
     return string.format("D:%s:%d:%d:%s", token, i, n, part)
 end
@@ -159,6 +167,8 @@ function Comm.SendShare(charKey, mapID, level, tier, pretty)
     local marker = Comm.OfferText(charKey, mapID, level, tier, pretty)
     if not marker then return false end
     C_ChatInfo.SendChatMessage(marker, chatType)
+    -- The version beacon rides along on the hidden channel, same audience.
+    C_ChatInfo.SendAddonMessage(PREFIX, Comm.BuildVersionBeacon(KG.VERSION), chatType)
     return true
 end
 
@@ -239,6 +249,8 @@ if StaticPopupDialogs then -- absent only in the offline test harness
         OnAccept = function(self, data)
             requested[data.token] = { from = data.sender, parts = {}, at = GetTime() }
             C_ChatInfo.SendAddonMessage(PREFIX, Comm.BuildRequest(data.token), "WHISPER", data.sender)
+            -- Gossip back the other way: the sender learns OUR version too.
+            C_ChatInfo.SendAddonMessage(PREFIX, Comm.BuildVersionBeacon(KG.VERSION), "WHISPER", data.sender)
             C_Timer.After(REQUEST_TTL, function()
                 if requested[data.token] then
                     requested[data.token] = nil
@@ -296,6 +308,18 @@ function Comm:Setup()
             return
         end
         local token, i, n, part = Comm.ParseChunk(msg)
-        if token then OnChunk(token, i, n, part, sender) end
+        if token then
+            OnChunk(token, i, n, part, sender)
+            return
+        end
+        -- The version beacon: someone shared or requested nearby with a newer
+        -- build. Same once-per-session throttle as the import nudge — a busy
+        -- guild evening must not turn into a nag loop.
+        local ver = Comm.ParseVersionBeacon(msg)
+        if ver and not versionNudged and KG.Codec.NewerVersion(ver, KG.VERSION) then
+            versionNudged = true
+            print(string.format("|cff88ccffKeystoneGhost|r: a share came from v%s and you run v%s. An update is available.",
+                ver, KG.VERSION))
+        end
     end)
 end

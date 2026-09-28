@@ -173,8 +173,9 @@ local function RowTip(row)
     tip[#tip + 1] = dur
     -- F3 (his yes 2026-08-30): which reset this best was set in. Only when
     -- the stamp exists — old saves, Raider.IO and KPG1 rows carry none and
-    -- make no claim. Same switch as the date tint.
-    if KG.db.resetFresh ~= false then
+    -- make no claim. Same switch as the date tint; OPT-IN since 2026-09-10
+    -- (his "disable it by default").
+    if KG.db.resetFresh == true then
         local S = KG.Scenario
         local we = S and S.WeekEndEpoch and S:WeekEndEpoch()
         local age = we and M.ResetAge(run.week, we)
@@ -805,6 +806,58 @@ local function BuildFrame()
     H(COL.TIME + 6, "Time", "time"); H(COL.DATE + 6, "When", "date")
     H(COL.ROUTE + 6, "Route"); H(COL.OWNER + 6, "Ghost of")
 
+    -- Filter box (1.1 wave 1, his "search box" ask): right-aligned in the
+    -- header over the button columns, which carry no caps — costs no list
+    -- height. Filters the OPEN tab's rows on what they display; runtime-only
+    -- state like select mode, cleared when the window closes.
+    local search = CreateFrame("EditBox", nil, header, "BackdropTemplate")
+    search:SetSize(120, HEADER_H)
+    search:SetPoint("RIGHT", header, "RIGHT", -2, 0)
+    search:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    search:SetBackdropColor(0.10, 0.10, 0.13, 0.9)
+    search:SetBackdropBorderColor(0.29, 0.29, 0.33, 1)
+    Style.SetFont(search, 10)
+    search:SetTextInsets(5, 5, 0, 0)
+    search:SetAutoFocus(false)
+    search:SetMaxLetters(30)
+    search.ghost = search:CreateFontString(nil, "OVERLAY")
+    Style.SetFont(search.ghost, 10)
+    search.ghost:SetPoint("LEFT", 5, 0)
+    search.ghost:SetText("Filter…")
+    search.ghost:SetTextColor(0.45, 0.45, 0.49)
+    search:SetScript("OnTextChanged", function(self)
+        local text = self:GetText() or ""
+        search.ghost:SetShown(text == "" and not self:HasFocus())
+        local needle = text ~= "" and text:lower() or nil
+        if needle ~= Library.searchText then
+            Library.searchText = needle
+            Library:Refresh()
+        end
+    end)
+    search:SetScript("OnEditFocusGained", function() search.ghost:Hide() end)
+    search:SetScript("OnEditFocusLost", function(self)
+        search.ghost:SetShown((self:GetText() or "") == "")
+    end)
+    search:SetScript("OnEscapePressed", function(self)
+        self:SetText("")
+        self:ClearFocus()
+    end)
+    search:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    search:SetScript("OnEnter", function(self)
+        self:SetBackdropBorderColor(Style.GetAccent())
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Filter this dungeon's list")
+        GameTooltip:AddLine("Matches key, result, time, date, ghost owner and route. ESC clears.",
+            0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+    end)
+    search:SetScript("OnLeave", function(self)
+        self:SetBackdropBorderColor(0.29, 0.29, 0.33, 1)
+        GameTooltip:Hide()
+    end)
+    frame.search = search
+
     -- Scrolling list. Hangs off the header, which hangs off the tab strip —
     -- a two-row strip pushes everything down instead of overlapping it.
     local scroll = CreateFrame("ScrollFrame", "KeystoneGhostLibraryScroll", frame, "UIPanelScrollFrameTemplate")
@@ -828,6 +881,13 @@ local function BuildFrame()
     frame.empty:SetJustifyH("LEFT")
     frame.empty:SetTextColor(0.55, 0.55, 0.55)
     frame.empty:Hide()
+
+    -- The filter's honest zero: rows exist, none match. Without this line a
+    -- filtered-out dungeon looks like data loss.
+    frame.noMatch = frame.content:CreateFontString(nil, "OVERLAY")
+    Style.SetFont(frame.noMatch, 11)
+    frame.noMatch:SetTextColor(0.55, 0.55, 0.55)
+    frame.noMatch:Hide()
 
     -- Bottom bar: the one Import door + the Share Tag disclosure.
     local bottomSep = frame:CreateTexture(nil, "BORDER")
@@ -919,6 +979,40 @@ local function BuildFrame()
     deleteSel:Hide()
     frame.deleteSel = deleteSel
 
+    -- "Clear all imports" without new machinery (1.1 wave 1): a select-mode
+    -- helper ticks every imported ghost across every dungeon and character,
+    -- then the existing Delete button asks once. Raider.IO mirrors never
+    -- qualify (no importedFrom, and mirrors have no delete door anyway).
+    local checkImports = BarButton(110, "Check imports", {
+        "Check imports",
+        "Ticks every ghost that arrived from someone else, across all dungeons and characters.",
+        "The Delete button then removes them with one confirm. Untick any you want to keep first." },
+        function()
+            local n = 0
+            for charKey, byMap in pairs(KG.db.runs) do
+                if type(byMap) == "table" and charKey ~= KG.RIO_CHAR then
+                    for mapID, byLevel in pairs(byMap) do
+                        for level, tiers in pairs(byLevel) do
+                            for tier, run in pairs(tiers) do
+                                if type(run) == "table" and run.importedFrom then
+                                    n = n + 1
+                                    Library.selected[table.concat({ charKey, mapID, level, tier }, "|")] =
+                                        { charKey = charKey, mapID = mapID, level = level, tier = tier }
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            print("|cff88ccffKeystoneGhost|r: " .. (n > 0
+                and string.format("%d imported ghost%s checked. Delete asks once.", n, n == 1 and "" or "s")
+                or "no imported ghosts stored."))
+            Library:Refresh()
+        end)
+    checkImports:SetPoint("LEFT", deleteSel, "RIGHT", 8, 0)
+    checkImports:Hide()
+    frame.checkImports = checkImports
+
     -- Season rollover, his spec 2026-08-19 after seeing round one live: ONE
     -- button, one click, no confirm dialog. The copy window IS the confirm —
     -- it opens with the whole library in it, and CLOSING it is what deletes
@@ -1007,11 +1101,27 @@ local function BuildFrame()
         Library:Refresh()
     end)
     -- Closing the window ends select mode and forgets the checks (F12): a
-    -- reopened Library never starts armed for deletion.
+    -- reopened Library never starts armed for deletion. The filter clears for
+    -- the same reason — an invisible stale filter reads as lost ghosts.
     frame:SetScript("OnHide", function()
         Library.selecting = false
         Library.selected = {}
+        if frame.search then frame.search:SetText("") end -- OnTextChanged clears searchText
     end)
+end
+
+--- The filter's match text: everything the row displays, lowercased. Composed
+--- from the same helpers the paint uses, so what you read is what matches.
+local function RowMatches(r, needle)
+    local hay = table.concat({
+        "+" .. tostring(r.level or ""),
+        r.tier == 0 and "depleted" or M.TierLabel(r.tier) or "",
+        M.FormatClock(r.run.durationSec or 0),
+        DateShort(r.run.completedAt) or "",
+        OwnerText(r) or "",
+        r.run.routeName and M.StripColors(r.run.routeName) or "",
+    }, " "):lower()
+    return hay:find(needle, 1, true) ~= nil
 end
 
 --- Rebuild the visible list from the pure model. Pools grow as needed; unused
@@ -1128,7 +1238,7 @@ function Library:Refresh()
     -- tab body's first row (name · par · count), so no information moved out.
     -- F3's reset boundary is paint-constant: read once, not per row (council
     -- 2026-09-01 — WeekEndEpoch is two pcalls a call).
-    local weekEnd = KG.db.resetFresh ~= false and S.WeekEndEpoch and S:WeekEndEpoch() or nil
+    local weekEnd = KG.db.resetFresh == true and S.WeekEndEpoch and S:WeekEndEpoch() or nil
     local usedG, usedR, y = 0, 0, 0
     local g
     for _, cand in ipairs(groups) do
@@ -1167,7 +1277,18 @@ function Library:Refresh()
         -- about the window, hanging off Algeth'ar Academy as though it were about
         -- Algeth'ar Academy. It belongs to the empty STATE, below, once.
 
-        for _, r in ipairs(g.rows) do
+        -- The filter narrows the paint, never the model: header counts stay
+        -- honest totals, and clearing the box brings every row straight back.
+        local rows = g.rows
+        local ft = Library.searchText
+        if ft then
+            local kept = {}
+            for _, r in ipairs(g.rows) do
+                if RowMatches(r, ft) then kept[#kept + 1] = r end
+            end
+            rows = kept
+        end
+        for _, r in ipairs(rows) do
             usedR = usedR + 1
             local row = AcquireRow(usedR)
             r.groupName = g.name
@@ -1265,6 +1386,17 @@ function Library:Refresh()
             row:Show()
             y = y + ROW_H
         end
+        if ft and #rows == 0 and #g.rows > 0 then
+            frame.noMatch:SetText("No ghosts here match the filter.")
+            frame.noMatch:ClearAllPoints()
+            frame.noMatch:SetPoint("TOPLEFT", frame.content, "TOPLEFT", 6, -(y + 6))
+            frame.noMatch:Show()
+            y = y + ROW_H
+        else
+            frame.noMatch:Hide()
+        end
+    else
+        frame.noMatch:Hide()
     end
     for i = usedG + 1, #frame.groupPool do frame.groupPool[i]:Hide() end
     for i = usedR + 1, #frame.rowPool do frame.rowPool[i]:Hide() end
@@ -1312,6 +1444,7 @@ function Library:Refresh()
         for _ in pairs(Library.selected) do n = n + 1 end
         frame.deleteSel.text:SetText(n > 0 and ("Delete (" .. n .. ")") or "Delete")
         frame.deleteSel:SetShown(Library.selecting)
+        frame.checkImports:SetShown(Library.selecting)
     end
 
     -- The sort caps' state: the active column wears the accent (F10).

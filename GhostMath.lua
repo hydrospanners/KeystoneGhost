@@ -734,6 +734,33 @@ function M.ScoreForRun(level, durationSec, parSec, baseTable)
     return base + bonus, base, bonus
 end
 
+--- The run's field percentile off a shipped pace curve (Data_PaceCurves.lua,
+--- F7 wave 3): entry = `{ pop, p = {[pct]=seconds} }`, grid = the sampled
+--- anchor percentiles ascending. p[X] is the clear time that beats X% of the
+--- field, so times FALL as X rises. Linear between anchors; clamped to the
+--- sampled ends (faster than p[last] stays p[last] — never extrapolate a
+--- claim the sample cannot back). Nil when slower than the slowest anchor or
+--- the shapes are wrong: the caller hides the chip, never guesses.
+--- @return percentile (number, one-decimal precision left to the caller)
+function M.PacePercentile(entry, grid, durationSec)
+    if type(entry) ~= "table" or type(entry.p) ~= "table" or type(grid) ~= "table" then return nil end
+    durationSec = tonumber(durationSec)
+    if not durationSec or #grid < 2 then return nil end
+    local p = entry.p
+    if durationSec > (p[grid[1]] or -math.huge) then return nil end
+    local last = grid[#grid]
+    if p[last] and durationSec <= p[last] then return last end
+    for i = 2, #grid do
+        local lo, hi = grid[i - 1], grid[i]
+        local tSlow, tFast = p[lo], p[hi]
+        if tSlow and tFast and durationSec <= tSlow and durationSec > tFast then
+            if tSlow == tFast then return hi end
+            return lo + (hi - lo) * (tSlow - durationSec) / (tSlow - tFast)
+        end
+    end
+    return nil -- a gap in the anchors (malformed table): no claim
+end
+
 --- Whole resets between a run's `week` stamp (its reset week's END epoch)
 --- and the current one — 0 = set this reset (F3, his yes 2026-08-30).
 --- Nil when either side is missing: old saves and converted rows carry no
