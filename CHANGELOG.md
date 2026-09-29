@@ -2,6 +2,11 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [1.1.1] - 2026-09-29
+
+- Updated for WoW 12.1.5.
+- Fixed the key level missing on the Raider.IO row in the Ghost Library.
+
 ## [1.1.0] - 2026-09-28
 
 - Added percentile paces to the Rabbit, p50 to p99. The Rabbit runs at

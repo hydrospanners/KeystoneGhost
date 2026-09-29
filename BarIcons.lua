@@ -83,7 +83,7 @@ Icons.RabbitFaceID = RabbitFaceID -- (faceKey) → fileID|false; the Options
 
 local ownerMemo = setmetatable({}, { __mode = "k" }) -- [run table] = charKey | false
 
---- The run's owner CLASS token (#146 follow-up, his Gandalfred catch): an
+--- The run's owner CLASS token (#146 follow-up, his stored-report catch): an
 --- import names its exporter in importedFrom; a same-account alt's run
 --- carries nothing, so ask the store who owns it — MEMOIZED per run table
 --- (weak keys; council 2026-09-01: the call sites ride the 0.1s repaint,

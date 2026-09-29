@@ -1,4 +1,4 @@
-## Interface: 120100
+## Interface: 120100, 120105
 ## Title: Keystone Ghost - MDT Data Bridge
 ## Notes: Demand-loaded bridge to Mythic Dungeon Tools' dungeon data (MDT 6.2+). Does nothing on its own.
 ## Author: Hydrospanners

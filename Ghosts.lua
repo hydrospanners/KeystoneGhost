@@ -284,7 +284,7 @@ function G:BuildRioReference()
         -- `level` is display-only here (the panel's `key` column): the summary
         -- carries it, and without it the degraded row would read "—" against
         -- ghosts that all state their key level.
-        run = { durationSec = dur, total = total, level = tonumber(rep.mythic_level),
+        run = { durationSec = dur, total = total, level = tonumber(rep.level),
             snapshots = { { 0, 0, 0 } },
             bossKills = {}, bossNames = {}, bossCounts = {}, bossIDs = {}, bossJIDs = {} },
     }
@@ -603,8 +603,8 @@ end
 
 --- The current character's pick table, [mapID] = { char, level, tier } (the
 --- Raider.IO pin is { char = KG.RIO_CHAR } alone). Picks are PER CHARACTER
---- (Developer 2026-07-21: Holycowbell pinning a Leegolas run must not plant that
---- pin on Leegolas too) and ONE PER DUNGEON by construction — a single table
+--- (Developer 2026-07-21: an alt pinning the main's run must not plant that
+--- pin on the main too) and ONE PER DUNGEON by construction — a single table
 --- slot per mapID is the whole exclusivity mechanism, no sweeping needed.
 --- `create` builds the character's table on first pin; without it the return
 --- may be nil (a fresh character — every consumer handles that).

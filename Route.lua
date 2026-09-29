@@ -249,7 +249,7 @@ local modernMDT -- session cache, set only on a fully successful resolve
 --- "External addon interfaces"). Patch drift is deliberately silent: MDT
 --- patches are data fixes, and our data reads their live files, so it cannot
 --- go stale.
-local MDT_BUILT_FOR = "6.2.9" -- G5 sweep 2026-08-29: every touchpoint re-verified against 6.2.9
+local MDT_BUILT_FOR = "6.2.20" -- dependency watch 2026-09-29: every touchpoint + offline bridge load re-verified against 6.2.20
 
 --- Pure comparator (offline-tested): "older" | "newer" when MAJOR.MINOR
 --- differs, nil when in sync or unparseable.
