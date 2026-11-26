@@ -314,11 +314,12 @@ end
 -- the portal decodes client-side.
 -- A DEDICATED route, not the app root (Developer 2026-07-26). This string is
 -- frozen into every shipped zip: an install that never updates keeps emitting
--- it forever, so the portal owns a redirect at this path and can move the app
--- whenever it likes. Redirects carry the fragment automatically as long as the
--- target has no fragment of its own — which is why the payload must never be
--- moved into a query parameter.
-Codec.PORTAL_URL = "https://hydrospanners.com/keystone-ghost/import"
+-- it forever. The app moved to its own subdomain on 2026-11-25. The old path
+-- (hydrospanners.com/keystone-ghost/import) is not a redirect: it serves a
+-- banner page that links here, so an old install's link lands on a page that
+-- names the new address instead of dropping the payload. The payload must
+-- never move into a query parameter.
+Codec.PORTAL_URL = "https://keystone-ghost.hydrospanners.com/import"
 
 --- Percent-encode everything outside RFC 3986 unreserved. Measured on a real
 --- 40-ghost library: 96.6% of the print alphabet passes through untouched —

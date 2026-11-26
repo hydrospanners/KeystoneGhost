@@ -212,12 +212,12 @@ local function BuildTestData()
     -- Two manufactured roster fillers (time-scaled copies of the base run) so /kg test
     -- exercises the full 3-row roster: a slower own +1 and a faster "imported" +3.
     test.run2 = CopyScaled(test.run, 1.09, 1)                                -- own +1, 29:26
-    test.run3 = CopyScaled(test.run, 0.926, 3, "Leegolas-TarrenMill-DRUID")  -- imported +3, 25:00
+    test.run3 = CopyScaled(test.run, 0.926, 3, "Boonkerz-TarrenMill-DRUID")  -- imported +3, 25:00
     test.par = par
     -- 12 even pulls over a 300-count dungeon for the pull indicator preview; the
     -- createdBy sample shows the class-colored creator token in the demo.
     test.route = { cumulativeForces = {}, nPulls = 12, name = "Test route",
-        createdBy = { name = "Leegolas", classFile = select(2, UnitClass("player")) } }
+        createdBy = { name = "Boonkerz", classFile = select(2, UnitClass("player")) } }
     for i = 1, 12 do test.route.cumulativeForces[i] = 25 * i end
     SeedTestSwitch()
 end

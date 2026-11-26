@@ -2,6 +2,12 @@
 
 All notable changes to Keystone Ghost are listed here.
 
+## [1.1.2] - 2026-11-26
+
+- Changed "Open my library online" to open
+  keystone-ghost.hydrospanners.com. Links from older versions land on a
+  page that points there.
+
 ## [1.1.1] - 2026-09-29
 
 - Updated for WoW 12.1.5.
